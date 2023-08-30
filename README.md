@@ -62,11 +62,11 @@ we involve more computers we run into the problem highlighted by Barbara Liskov
 at the very end of her Turing award
 [lecture](https://youtu.be/qAKrMdUycb8?t=3058) (2009):
 
-  "There's a funny disconnect in how we write distributed programs. You
-   write your individual modules, but then when you want to connect
-   them together you're out of the programming language and into this
-   other world. Maybe we need languages that are a little bit more
-   complete now, so that we can write the whole thing in the language."
+> "There's a funny disconnect in how we write distributed programs. You
+>  write your individual modules, but then when you want to connect
+>  them together you're out of the programming language and into this
+>  other world. Maybe we need languages that are a little bit more
+>  complete now, so that we can write the whole thing in the language."
 
 Ideally we'd like our pipelines to seemlessly span over multiple computers.
 
@@ -81,6 +81,8 @@ A pipeline that is deployed with more CPUs or more computers should, with minima
 - Erlang
   33x faster on 64 core machine, without changing the software at all
   https://youtu.be/bo5WL5IQAd0?t=2494
+
+- Substrate https://www.youtube.com/watch?v=8M0wTX6EOVI
 
 
 1. Break problem up in stages
@@ -104,7 +106,96 @@ A pipeline that is deployed with more CPUs or more computers should, with minima
 * Akka streams and Akka cluster
 * Spark streaming
 
-## Model
+## Plan
+
+The rest of this post is organised as follows.
+
+First we will have a look at a model or specification of what we'd like our
+pipelines to do.
+
+This model is sequential and
+
+
+* sequential list transformer model
+* parallel queue implementation + problems
+* disruptor standalone
+* disruptor pipelines
+* monitoring
+
+## List transformer model
+
+```haskell
+data P a b where
+  Id      :: P a a
+  (:>>>)  :: P a b -> P b c -> P a c
+  Map     :: (a -> b) -> P a b
+  (:***)  :: P a c -> P b d -> P (a, b) (c, d)
+  (:&&&)  :: P a b -> P a c -> P a (b, c)
+  (:+++)  :: P a c -> P b d -> P (Either a b) (Either c d)
+  (:|||)  :: P a c -> P b c -> P (Either a b) c
+```
+
+
+```haskell
+model :: P a b -> [a] -> [b]
+model Id         xs  = xs
+model (f :>>> g) xs  = model g (model f xs)
+model (Map f)    xs  = map f xs
+model (f :*** g) xys =
+  let
+    (xs, ys) = unzip xys
+  in
+    zip (model f xs) (model g ys)
+model (f :&&& g) xs = zip (model f xs) (model g xs)
+model (f :+++ g) es =
+  let
+    (xs, ys) = partitionEithers es
+  in
+    merge es (model f xs) (model g ys)
+  where
+    merge (Left  _ : es) (l : ls) rs       = Left  l : merge es ls rs
+    merge (Right _ : es) ls       (r : rs) = Right r : merge es ls rs
+model (f :||| g) es =
+  let
+    (xs, ys) = partitionEithers es
+  in
+    merge es (model f xs) (model g ys)
+  where
+    merge (Left  _ : es) (l : ls) rs       = l : merge es ls rs
+    merge (Right _ : es) ls       (r : rs) = r : merge es ls rs
+```
+
+```haskell
+instance Category P where
+  id    = Id
+  g . f = f :>>> g
+
+instance Arrow P where
+  arr     = Map
+  f *** g = f :*** g
+  f &&& g = f :&&& g
+
+instance ArrowChoice P where
+  f +++ g = f :+++ g
+  f ||| g = f :||| g
+```
+
+## Queue deployment (first parallel deployment)
+
+```
+ [a] -- l --> [b] ------- return -------> IO [b]
+  |                                       |
+  | toQ                                   | IO id
+  v                                       v
+Q a -- q --> IO (Q b) -- fmap toList --> IO [b]
+```
+
+```haskell
+prop_commute :: P a b -> [a] -> PropertyM IO Bool
+prop_commute p xs = do
+  ys <- run (atomically flushTQueue <$> deploy p (toQ xs))
+  assert (model p xs == ys)
+```
 
 ## Disruptor
 
@@ -122,7 +213,6 @@ to several processors we first need to copy the event to the processors queues.
 
 This copy is one of many things that makes the Disruptor a better queue
 implementation choice.
-
 
 
 ## Arrow EDSL
