@@ -1,4 +1,4 @@
-# An Arrow-based EDSL for Disruptor pipelines
+# Declarative pipelines using the Disruptor
 
 *Work in progress, please don't share yet*
 
@@ -26,14 +26,14 @@ for multi-cast (many consumers can in parallel process the same event), batching
 (both on producer and consumer side), back-pressure, sharding (for scalability)
 and dependencies between consumers.
 
-In this post we'll recall the problem of using "simple" queues, discuss how
+In this post we'll recall the problem of using "normal" queues, discuss how
 Disruptor helps solve this problem and have a look at how we can we provide a
 declarative high-level language for expressing pipelines backed by Disruptors
 where all low-level details are hidden away from the user of the library. We'll
 also have a look at how we can monitor and visualise such pipelines for
 debugging and performance troubleshooting purposes.
 
-## Motivation
+## Motivation and inspiration
 
 Before we dive into *how* we can achieve this, let's start with the question of
 *why* I'd like to do it.
@@ -76,15 +76,6 @@ configurations of processors without changing the pipeline.
 A pipeline that is deployed with more CPUs or more computers should, with minimal change, scale almost linearly.
   - auto scaling thread pools, https://github.com/stevana/elastically-scalable-thread-pools
 
-* Martin Thompson, reactive manifesto, disruptor, erlang messaging comment?
-
-- Erlang
-  33x faster on 64 core machine, without changing the software at all
-  https://youtu.be/bo5WL5IQAd0?t=2494
-
-- Substrate https://www.youtube.com/watch?v=8M0wTX6EOVI
-
-
 1. Break problem up in stages
 2. Implement each stage
 3. Connect stages together into a pipeline
@@ -93,6 +84,32 @@ A pipeline that is deployed with more CPUs or more computers should, with minima
 6. Monitor/observe pipelines to spot bottlenecks
 7. Shard/scale/reroute pipelines and add more machines without downtime
 8. Determinstic while parallel
+
+
+More recently, Martin Thompson has given many talks which echo the general ideas
+of Jim and Barbara. Martin also coauthored the [reactive
+manifesto](https://www.reactivemanifesto.org/) which captures many of these
+ideas in text. Martin is also one of the people behind the Disruptor, which we
+will come back to soon, and he also [said](https://youtu.be/OqsAGFExFgQ?t=2532)
+the following:
+
+> "If there's one thing I'd say to the Erlang folks, it's you got the stuff right
+> from a high-level, but you need to invest in your messaging infrastructure so
+> it's super fast, super efficient and obeys all the right properties to let this
+> stuff work really well."
+
+which together with Joe Armstrong's
+[anecdote](https://youtu.be/bo5WL5IQAd0?t=2494) of an unmodified Erlang program
+*only* running 33 times faster on a 64 core machine has made me think about how
+one can improve upon the already excellent work that Erlang is doing in this
+space.
+
+- Even longer term, I like to think of pipelines spanning computers as a
+  building block for what Barbara
+  [calls](https://www.youtube.com/watch?v=8M0wTX6EOVI) a "substrate for
+  distributed systems". Unlike Barbara I don't think this substrate should be
+  based on shared memory, but overall I agree with her goal of making it easier
+  to program distributed systems by providing generic building blocks.
 
 ## Prior work
 
@@ -106,21 +123,45 @@ A pipeline that is deployed with more CPUs or more computers should, with minima
 * Akka streams and Akka cluster
 * Spark streaming
 
+### Dataflow
+
+* Lustre / SCADA / Esterel
+* https://en.wikipedia.org/wiki/Dataflow_programming
+
+### (Functional) reactive programming
+
+* https://hackage.haskell.org/package/dunai-0.11.2/docs/Data-MonadicStreamFunction-Parallel.html
+* [Parallel Functional Reactive Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson et al. (2000)
+
+* http://conal.net/papers/push-pull-frp/push-pull-frp.pdf
+> "Peterson et al. (2000) explored opportunities for parallelism in
+> implementing a variation of FRP. While the underlying semantic
+> model was not spelled out, it seems that semantic determinacy was
+> not preserved, in contrast to the semantically determinate concur-
+> rency used in this paper (Section 11)."
+
+* Where "determinate" is defined in http://conal.net/papers/warren-burton/Indeterminate%20behavior%20with%20determinate%20semantics%20in%20parallel%20programs.pdf
+
 ## Plan
 
 The rest of this post is organised as follows.
 
-First we will have a look at a model or specification of what we'd like our
-pipelines to do.
+First we'll have a look at how to model pipelines as a transformation of lists.
+The purpose of this is to give us an easy to understand sequential specification
+of we would like our pipelines to do.
 
-This model is sequential and
+We'll then give our first parallel implementation of pipelines using "normal"
+queues. The main point here is to recap of the problem that arises from using
+"normal" queues, but we'll also sketch how one can test the parallel
+implementation using the model.
 
+After that we'll have a look at the Disruptor API, sketch its single producer
+and consumer implementation and discuss how it helps solve the problems we
+identified in the previous section.
 
-* sequential list transformer model
-* parallel queue implementation + problems
-* disruptor standalone
-* disruptor pipelines
-* monitoring
+Finally we'll have enough background to be able to sketch the Disruptor
+implementation of pipelines. We'll also discuss how monitoring/observability can
+be added.
 
 ## List transformer model
 
@@ -199,7 +240,7 @@ prop_commute p xs = do
 
 ## Disruptor
 
-In the previous post we used simple FIFO queues (`TBQueue`s to be precise), one
+In the previous post we used normal FIFO queues (`TBQueue`s to be precise), one
 of the problems with those is that if we want to, for example, fan out one event
 to several processors we first need to copy the event to the processors queues.
 
