@@ -119,6 +119,10 @@ space.
 
 * transducers
 
+### Java
+
+* Disruptor wizard
+
 ### Dataflow
 
 * Lustre / SCADA / Esterel
@@ -223,7 +227,9 @@ instance ArrowChoice P where
   f ||| g = f :||| g
 ```
 
-## Queue deployment (first parallel deployment)
+## Queue pipeline deployment
+
+first parallel deployment
 
 ```haskell
 deploy :: P a b -> TQueue a -> IO (TQueue b)
@@ -231,7 +237,7 @@ deploy Id         xs = return xs
 deploy (f :>>> g) xs = deploy g =<< deploy f xs
 deploy (Map f)    xs = do
   ys <- newTQueueIO
-  _pid <- forkIO $ forever $ do
+  forkIO $ forever $ do
     x <- atomically (readTQueue xs)
     let y = f x
     atomically (writeTQueue ys y)
@@ -239,7 +245,7 @@ deploy (Map f)    xs = do
 deploy (f :&&& g) xs = do
   xs1 <- newTQueueIO
   xs2 <- newTQueueIO
-  _pid <- forkIO $ forever $ do
+  forkIO $ forever $ do
     x <- atomically (readTQueue xs)
     atomically $ do
       writeTQueue xs1 x
@@ -247,7 +253,7 @@ deploy (f :&&& g) xs = do
   ys <- deploy f xs1
   zs <- deploy g xs2
   yzs <- newTQueueIO
-  _pid <- forkIO $ forever $ do
+  forkIO $ forever $ do
     y <- atomically (readTQueue ys)
     z <- atomically (readTQueue zs)
     atomically (writeTQueue yzs (y, z))
@@ -270,9 +276,13 @@ Q a -- q --> IO (Q b) -- fmap toList --> IO [b]
 ```
 
 ```haskell
-prop_commute :: P a b -> [a] -> PropertyM IO Bool
+prop_commute :: Eq b => P a b -> [a] -> PropertyM IO ()
 prop_commute p xs = do
-  ys <- run (atomically flushTQueue <$> deploy p (toQ xs))
+  ys <- run $ do
+    qxs <- newTQueueIO
+    mapM_ (atomically . writeTQueue qxs) xs
+    qys <- deploy p qxs
+    replicateM (length xs) (atomically (readTQueue qys))
   assert (model p xs == ys)
 ```
 
@@ -282,11 +292,6 @@ In the previous post we used normal FIFO queues (`TQueue`s to be precise), one
 of the problems with those is that if we want to, for example, fan out one event
 to several processors we first need to copy the event to the processors queues.
 
-```
-              +--------> [] [ processor 1]
-             /
-  [ev1, ev2]
-```
 
 
 
@@ -294,9 +299,7 @@ This copy is one of many things that makes the Disruptor a better queue
 implementation choice.
 
 
-## Arrow EDSL
-
-## Deploying
+## Disruptor pipeline deployment
 
 ## Example
 
