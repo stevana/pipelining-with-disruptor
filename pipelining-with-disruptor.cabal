@@ -30,6 +30,7 @@ library
     Disruptor
     Model
     Pipeline
+    QueueDeployment
     Template
     Visualise
 
@@ -40,6 +41,7 @@ library
     , directory   >=1.3.7  && <1.4
     , filepath    >=1.4.2  && <1.5
     , process     >=1.6.16 && <1.7
+    , stm         >=2.5.1  && <2.6
     , text        >=2.0.1  && <2.1
     , time        >=1.12.2 && <1.13
 

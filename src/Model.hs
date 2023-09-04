@@ -8,6 +8,9 @@ import Data.Either
 
 ------------------------------------------------------------------------
 
+infixr 1 :>>>
+infixr 3 :&&&
+
 data P a b where
   Id      :: P a a
   (:>>>)  :: P a b -> P b c -> P a c
@@ -35,6 +38,7 @@ model (f :+++ g) es0 =
   in
     merge es0 (model f xs) (model g ys)
   where
+    merge []             []       []       = []
     merge (Left  _ : es) (l : ls) rs       = Left  l : merge es ls rs
     merge (Right _ : es) ls       (r : rs) = Right r : merge es ls rs
     merge _ _ _ = error "impossible"
@@ -44,9 +48,13 @@ model (f :||| g) es0 =
   in
     merge es0 (model f xs) (model g ys)
   where
+    merge []             []       []       = []
     merge (Left  _ : es) (l : ls) rs       = l : merge es ls rs
     merge (Right _ : es) ls       (r : rs) = r : merge es ls rs
     merge _ _ _ = error "impossible"
+
+example :: [Int] -> [(Int, Bool)]
+example = model (Id :&&& Map even)
 
 ------------------------------------------------------------------------
 

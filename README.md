@@ -57,6 +57,8 @@ and even sequence number, and feeding one half of the inputs to one copy of the
 pipeline and the other half to another copy, thereby almost doubling the
 throughput.
 
+"Natural" way of introducing parallelism without introducing non-determinism.
+
 This is a nice model of making good use of CPUs/cores on a single computer. As
 we involve more computers we run into the problem highlighted by Barbara Liskov
 at the very end of her Turing award
@@ -71,20 +73,10 @@ at the very end of her Turing award
 Ideally we'd like our pipelines to seemlessly span over multiple computers.
 
 In fact it should be possible to deploy same pipeline to different
-configurations of processors without changing the pipeline.
+configurations of processors without changing the pipeline code.
 
-A pipeline that is deployed with more CPUs or more computers should, with minimal change, scale almost linearly.
+A pipeline that is deployed with more CPUs or more computers should, possibly with minimal change, scale almost linearly.
   - auto scaling thread pools, https://github.com/stevana/elastically-scalable-thread-pools
-
-1. Break problem up in stages
-2. Implement each stage
-3. Connect stages together into a pipeline
-4. Deploy pipeline on one or over several machines
-5. Update implementations of stages with zero downtime
-6. Monitor/observe pipelines to spot bottlenecks
-7. Shard/scale/reroute pipelines and add more machines without downtime
-8. Determinstic while parallel
-
 
 More recently, Martin Thompson has given many talks which echo the general ideas
 of Jim and Barbara. Martin also coauthored the [reactive
@@ -123,6 +115,10 @@ space.
 * Akka streams and Akka cluster
 * Spark streaming
 
+### Clojure
+
+* transducers
+
 ### Dataflow
 
 * Lustre / SCADA / Esterel
@@ -140,7 +136,8 @@ space.
 > not preserved, in contrast to the semantically determinate concur-
 > rency used in this paper (Section 11)."
 
-* Where "determinate" is defined in http://conal.net/papers/warren-burton/Indeterminate%20behavior%20with%20determinate%20semantics%20in%20parallel%20programs.pdf
+* Where "determinate" is defined in
+  http://conal.net/papers/warren-burton/Indeterminate%20behavior%20with%20determinate%20semantics%20in%20parallel%20programs.pdf
 
 ## Plan
 
@@ -194,6 +191,7 @@ model (f :+++ g) es =
   in
     merge es (model f xs) (model g ys)
   where
+    merge []             []       []       = []
     merge (Left  _ : es) (l : ls) rs       = Left  l : merge es ls rs
     merge (Right _ : es) ls       (r : rs) = Right r : merge es ls rs
 model (f :||| g) es =
@@ -202,8 +200,12 @@ model (f :||| g) es =
   in
     merge es (model f xs) (model g ys)
   where
+    merge []             []       []       = []
     merge (Left  _ : es) (l : ls) rs       = l : merge es ls rs
     merge (Right _ : es) ls       (r : rs) = r : merge es ls rs
+
+example :: [Int] -> [(Int, Bool)]
+example = model (Id :&&& Map even)
 ```
 
 ```haskell
@@ -223,10 +225,46 @@ instance ArrowChoice P where
 
 ## Queue deployment (first parallel deployment)
 
+```haskell
+deploy :: P a b -> TQueue a -> IO (TQueue b)
+deploy Id         xs = return xs
+deploy (f :>>> g) xs = deploy g =<< deploy f xs
+deploy (Map f)    xs = do
+  ys <- newTQueueIO
+  _pid <- forkIO $ forever $ do
+    x <- atomically (readTQueue xs)
+    let y = f x
+    atomically (writeTQueue ys y)
+  return ys
+deploy (f :&&& g) xs = do
+  xs1 <- newTQueueIO
+  xs2 <- newTQueueIO
+  _pid <- forkIO $ forever $ do
+    x <- atomically (readTQueue xs)
+    atomically $ do
+      writeTQueue xs1 x
+      writeTQueue xs2 x
+  ys <- deploy f xs1
+  zs <- deploy g xs2
+  yzs <- newTQueueIO
+  _pid <- forkIO $ forever $ do
+    y <- atomically (readTQueue ys)
+    z <- atomically (readTQueue zs)
+    atomically (writeTQueue yzs (y, z))
+  return yzs
+
+example' :: [Int] -> IO [(Int, Bool)]
+example' xs0 = do
+  xs <- newTQueueIO
+  mapM_ (atomically . writeTQueue xs) xs0
+  ys <- deploy (Id :&&& Map even) xs
+  replicateM (length xs0) (atomically (readTQueue ys))
 ```
- [a] -- l --> [b] ------- return -------> IO [b]
+
+```
+ [a] -- l --> [b] ------- return ------> IO [b]
   |                                       |
-  | toQ                                   | IO id
+  | toQ                                   | fmap id
   v                                       v
 Q a -- q --> IO (Q b) -- fmap toList --> IO [b]
 ```
@@ -240,7 +278,7 @@ prop_commute p xs = do
 
 ## Disruptor
 
-In the previous post we used normal FIFO queues (`TBQueue`s to be precise), one
+In the previous post we used normal FIFO queues (`TQueue`s to be precise), one
 of the problems with those is that if we want to, for example, fan out one event
 to several processors we first need to copy the event to the processors queues.
 
@@ -283,7 +321,8 @@ firefox hs-wc.svg
 * Can we be smarter about Either?
 * More monitoring?
 * Deploy across network of computers
-* Hot-code upgrades of workers
+* Hot-code upgrades of workers/stages with zero downtim
+* Shard/scale/reroute pipelines and add more machines without downtime
 
 ## See also
 
@@ -294,3 +333,5 @@ firefox hs-wc.svg
   benchmarks](https://github.com/mikeb01/folklore/tree/master/src/main/java/performance)
 
 * https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/
+
+* SEDA
