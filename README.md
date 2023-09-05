@@ -291,7 +291,7 @@ instance ArrowChoice P where
 ```
 
 Ideally we'd also like to be able to use `Arrow` notation/syntax to descripe our
-pipelines.
+pipelines[^1].
 
 ## Queue pipeline deployment
 
@@ -368,8 +368,22 @@ prop_commute p xs = do
 
 Actually running this property for arbitary pipelines would require us to first
 define a pipeline generator, which is a bit tricky given the indexes of the
-datatype[^1]. It can still me used as a helper for testing specific pipelines
+datatype[^2]. It can still me used as a helper for testing specific pipelines
 though, e.g. `prop_commute examplePipeline`.
+
+A bigger problem is that we've spawned two threads, when deploying `:&&&`, whose
+mere job is to copy elements from the input queue (`xs`) to the input queues of
+`f` and `g` (`xs{1,2}`), and from the outputs of `f` and `g` (`ys` and `zs`)to
+the output of `f &&& g` (`ysz`).
+
+Copying data is expensive and we also lost two threads in the process.
+
+This is pretty much where we left off in my previous post.
+
+We also had a look at how to shard inputs (for partitioned parallelism) as well
+made a simple benchmark to illustrate the speed ups we can get from pipelining.
+
+We'll not repeat those things here.
 
 ## Disruptor
 
@@ -424,7 +438,17 @@ firefox hs-wc.svg
 
 * https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/
 
-* SEDA
+* [*SEDA: An Architecture for Well-Conditioned Scalable Internet
+  Services*](https://people.eecs.berkeley.edu/~brewer/papers/SEDA-sosp.pdf)
 
 
-[^1]: Search for "Quickcheck GADTs" if you are interested in finding out more about this.
+[^1]: Even better would be if arrow notation worked for Cartesian categories.
+    See Conal Elliott's work on [compiling to
+    categories](http://conal.net/papers/compiling-to-categories/) , as well as
+    Oleg Grenrus' GHC
+    [plugin](https://github.com/phadej/overloaded/blob/master/src/Overloaded/Categories.hs)
+    that does the right thing and translates arrow syntax into Cartesian
+    categories.
+
+[^2]: Search for "QuickCheck GADTs" if you are interested in finding out more
+    about this topic.
