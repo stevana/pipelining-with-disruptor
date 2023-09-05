@@ -373,7 +373,7 @@ though, e.g. `prop_commute examplePipeline`.
 
 A bigger problem is that we've spawned two threads, when deploying `:&&&`, whose
 mere job is to copy elements from the input queue (`xs`) to the input queues of
-`f` and `g` (`xs{1,2}`), and from the outputs of `f` and `g` (`ys` and `zs`)to
+`f` and `g` (`xs{1,2}`), and from the outputs of `f` and `g` (`ys` and `zs`) to
 the output of `f &&& g` (`ysz`).
 
 Copying data is expensive and we also lost two threads in the process.
@@ -427,6 +427,7 @@ firefox hs-wc.svg
 * Shard/scale/reroute pipelines and add more machines without downtime
   - auto scaling thread pools, https://github.com/stevana/elastically-scalable-thread-pools
 * Generator for pipelines
+* Benchmarks
 
 ## See also
 
