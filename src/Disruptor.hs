@@ -277,8 +277,8 @@ tryClaimBatch rb n = assert (n > 0) $ do
     writeCachedGatingSequence rb minSequence
     if (wrapPoint > minSequence)
     then return Nothing
-    else return (Just next)
-  else return (Just next)
+    else return (Just $! next)
+  else return (Just $! next)
 
 writeRingBuffer :: RingBuffer a -> SequenceNumber -> a -> IO ()
 writeRingBuffer rb i x = writeArray (rbArray rb) (index (capacity rb) i) x

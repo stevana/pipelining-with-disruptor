@@ -41,13 +41,13 @@ Before we dive into *how* we can achieve this, let's start with the question of
 I believe the way we write programs for multi processors, i.e. multiple
 computers each with multiple CPUs, can be improved upon. Instead of focusing on
 the pitfalls of the current mainstream approaches to these problems, let's have
-a look at what to me seems like the most promising ways forward.
+a look at what to me seems like the most promising way forward.
 
 Jim Gray gave a great explaination of dataflow programming in this Turing Award
 Recipient [interview](https://www.youtube.com/watch?v=U3eo49nVxcA&t=1949s). He
-uses props to make his point, which makes it difficult to summaries in text
-here. I highly recommend watching the video clip, the relevant part is only 3
-minutes long.
+uses props to make his point, which makes it a bit difficult to summaries in
+text here. I highly recommend watching the video clip, the relevant part is only
+3 minutes long.
 
 The key point is exactly that of pipelining. Each stage is running on a
 CPU/core, this program is completely sequential, but by connecting several
@@ -55,12 +55,14 @@ stages we create a parallel pipeline. Further parallelism (what Jim calls
 partitioned parallelism) can be gained by partitioning the inputs, by say odd
 and even sequence number, and feeding one half of the inputs to one copy of the
 pipeline and the other half to another copy, thereby almost doubling the
-throughput.
+throughput. Jim calls this a "natural" way to achieve parallelism.
 
-"Natural" way of introducing parallelism without introducing non-determinism.
+While I'm not sure if "natural" is the best word, I do agree that it's a nice
+way to make good use of CPUs/cores on a single computer without introducing
+non-determinism.
 
-This is a nice model of making good use of CPUs/cores on a single computer. As
-we involve more computers we run into the problem highlighted by Barbara Liskov
+Things get a bit more tricky if we want to involve more computers. Part of the
+reason, I believe, is that we run into the problem highlighted by Barbara Liskov
 at the very end of her Turing award
 [lecture](https://youtu.be/qAKrMdUycb8?t=3058) (2009):
 
@@ -75,8 +77,24 @@ Ideally we'd like our pipelines to seemlessly span over multiple computers.
 In fact it should be possible to deploy same pipeline to different
 configurations of processors without changing the pipeline code.
 
-A pipeline that is deployed with more CPUs or more computers should, possibly with minimal change, scale almost linearly.
-  - auto scaling thread pools, https://github.com/stevana/elastically-scalable-thread-pools
+A pipeline that is redeployed with additional CPUs or computers might or might
+not scale, it depends on whether it makes sense to partition the input of a
+stage further or if perhaps the introduction of an additonal computer merely
+adds more overhead.
+
+How exactly the pipeline is best spread over the available computers and
+CPUs/cores will require some combination of domain knowledge, measurement and
+judgement.
+
+Depending on how quick we can make redeploying of pipelines, it might be
+possilbe to autoscale them using a program that monitors the queue lengths.
+
+Also related to redeploying, but even more important than autoscaling, are
+upgrades of pipelines.
+
+Both upgrading the code running at the individual stages, but also the pipeline
+itself.
+
 
 More recently, Martin Thompson has given many talks which echo the general ideas
 of Jim and Barbara. Martin also coauthored the [reactive
@@ -96,14 +114,23 @@ which together with Joe Armstrong's
 one can improve upon the already excellent work that Erlang is doing in this
 space.
 
-- Even longer term, I like to think of pipelines spanning computers as a
-  building block for what Barbara
-  [calls](https://www.youtube.com/watch?v=8M0wTX6EOVI) a "substrate for
-  distributed systems". Unlike Barbara I don't think this substrate should be
-  based on shared memory, but overall I agree with her goal of making it easier
-  to program distributed systems by providing generic building blocks.
+Longer term, I like to think of pipelines spanning computers as a building block
+for what Barbara [calls](https://www.youtube.com/watch?v=8M0wTX6EOVI) a
+"substrate for distributed systems". Unlike Barbara I don't think this substrate
+should be based on shared memory, but overall I agree with her goal of making it
+easier to program distributed systems by providing generic building blocks.
 
 ## Prior work
+
+Working with streams of data is common.
+
+Many streaming libraries are not:
+
+  1. doing parallel processing (or if so, they don't do it deterministically or
+     without copying data)
+  2. cannot span multiple computers
+
+Don't have a good deploy, upgrade, rescale story.
 
 ### Haskell
 
@@ -122,6 +149,7 @@ space.
 ### Java
 
 * Disruptor wizard
+* Aeron
 
 ### Dataflow
 
@@ -166,8 +194,16 @@ be added.
 
 ## List transformer model
 
+Let's first introduce the type for our pipelines. We index our pipeline datatype
+by two types, in order to be able to precisely specify its input and output
+types. For example, the `Id`entity pipeline has the same input as output type,
+while pipeline composition (`:>>>`) expects its first argument to be a pipeline
+from `a` to `b`, and the second argument a pipeline from `b` to `c` in order for
+the resulting composed pipeline to be from `a` to `c` (similar to functional
+composition).
+
 ```haskell
-data P a b where
+data P :: Type -> Type -> Type where
   Id      :: P a a
   (:>>>)  :: P a b -> P b c -> P a c
   Map     :: (a -> b) -> P a b
@@ -177,6 +213,21 @@ data P a b where
   (:|||)  :: P a c -> P b c -> P (Either a b) c
 ```
 
+Here's a pipeline that takes a stream of integers as input and outputs a stream
+of pairs where the first component is the input integer and the second component
+is a boolean indicating if the first component was an even integer or not.
+
+```haskell
+examplePipeline :: P Int (Int, Bool)
+examplePipeline = Id :&&& Map even
+```
+
+So far our pipelines are merely data which describes what we'd like to do. In
+order to actually perform a stream transformation we'd need to give semantics to
+our pipeline datatype.
+
+The simplest semantics we can give our pipelines is that in terms of list
+transformations.
 
 ```haskell
 model :: P a b -> [a] -> [b]
@@ -207,10 +258,22 @@ model (f :||| g) es =
     merge []             []       []       = []
     merge (Left  _ : es) (l : ls) rs       = l : merge es ls rs
     merge (Right _ : es) ls       (r : rs) = r : merge es ls rs
-
-example :: [Int] -> [(Int, Bool)]
-example = model (Id :&&& Map even)
 ```
+
+Note that this semantics is completely sequential and perserves the order of the
+inputs (determinism). We'll introduce parallelism without breaking determinism
+in the next section.
+
+We can now run our example pipeline in the REPL:
+
+```
+> model examplePipeline [1,2,3,4,5]
+[(1,False),(2,True),(3,False),(4,True),(5,False)]
+```
+
+Side note: the design space of what pipeline combinators to include in the
+pipeline datatype is very big. I've chosen the ones I've done because they are
+instances of already well established type classes:
 
 ```haskell
 instance Category P where
@@ -227,9 +290,22 @@ instance ArrowChoice P where
   f ||| g = f :||| g
 ```
 
+Ideally we'd also like to be able to use `Arrow` notation/syntax to descripe our
+pipelines.
+
 ## Queue pipeline deployment
 
-first parallel deployment
+In the previous section we saw how to deploy pipelines in a purely sequential
+way in order to process lists. The purpose of this is merely to give ourselves
+an intuition of what pipelines should do as well as an executable model which we
+can test our intuition against.
+
+Next we shall have a look at our first parallel deployment. The idea here is to
+show how we can involve multiple threads in the stream processing, without
+making the output non-deterministic (same input should always give the same
+output).
+
+We can achieve this as follows:
 
 ```haskell
 deploy :: P a b -> TQueue a -> IO (TQueue b)
@@ -258,7 +334,9 @@ deploy (f :&&& g) xs = do
     z <- atomically (readTQueue zs)
     atomically (writeTQueue yzs (y, z))
   return yzs
+```
 
+```haskell
 example' :: [Int] -> IO [(Int, Bool)]
 example' xs0 = do
   xs <- newTQueueIO
@@ -267,13 +345,15 @@ example' xs0 = do
   replicateM (length xs0) (atomically (readTQueue ys))
 ```
 
+Running this in our REPL, gives the same result as in the model:
+
 ```
- [a] -- l --> [b] ------- return ------> IO [b]
-  |                                       |
-  | toQ                                   | fmap id
-  v                                       v
-Q a -- q --> IO (Q b) -- fmap toList --> IO [b]
+> example' [1,2,3,4,5]
+[(1,False),(2,True),(3,False),(4,True),(5,False)]
 ```
+
+In fact, we can use our model to define a property-based test which asserts that
+our queue deployement is faithful to the model:
 
 ```haskell
 prop_commute :: Eq b => P a b -> [a] -> PropertyM IO ()
@@ -285,6 +365,11 @@ prop_commute p xs = do
     replicateM (length xs) (atomically (readTQueue qys))
   assert (model p xs == ys)
 ```
+
+Actually running this property for arbitary pipelines would require us to first
+define a pipeline generator, which is a bit tricky given the indexes of the
+datatype[^1]. It can still me used as a helper for testing specific pipelines
+though, e.g. `prop_commute examplePipeline`.
 
 ## Disruptor
 
@@ -326,6 +411,8 @@ firefox hs-wc.svg
 * Deploy across network of computers
 * Hot-code upgrades of workers/stages with zero downtim
 * Shard/scale/reroute pipelines and add more machines without downtime
+  - auto scaling thread pools, https://github.com/stevana/elastically-scalable-thread-pools
+* Generator for pipelines
 
 ## See also
 
@@ -338,3 +425,6 @@ firefox hs-wc.svg
 * https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/
 
 * SEDA
+
+
+[^1]: Search for "Quickcheck GADTs" if you are interested in finding out more about this.

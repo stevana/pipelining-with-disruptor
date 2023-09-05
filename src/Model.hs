@@ -1,7 +1,9 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 
 module Model where
 
+import Data.Kind
 import Control.Category
 import Control.Arrow
 import Data.Either
@@ -11,7 +13,7 @@ import Data.Either
 infixr 1 :>>>
 infixr 3 :&&&
 
-data P a b where
+data P :: Type -> Type -> Type where
   Id      :: P a a
   (:>>>)  :: P a b -> P b c -> P a c
   Map     :: (a -> b) -> P a b
@@ -19,6 +21,11 @@ data P a b where
   (:&&&)  :: P a b -> P a c -> P a (b, c)
   (:+++)  :: P a c -> P b d -> P (Either a b) (Either c d)
   (:|||)  :: P a c -> P b c -> P (Either a b) c
+
+------------------------------------------------------------------------
+
+examplePipeline :: P Int (Int, Bool)
+examplePipeline = Id :&&& Map even
 
 ------------------------------------------------------------------------
 
@@ -54,7 +61,7 @@ model (f :||| g) es0 =
     merge _ _ _ = error "impossible"
 
 example :: [Int] -> [(Int, Bool)]
-example = model (Id :&&& Map even)
+example = model examplePipeline
 
 ------------------------------------------------------------------------
 
