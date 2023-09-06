@@ -185,8 +185,8 @@ queues. The main point here is to recap of the problem that arises from using
 implementation using the model.
 
 After that we'll have a look at the Disruptor API, sketch its single producer
-and consumer implementation and discuss how it helps solve the problems we
-identified in the previous section.
+implementation and discuss how it helps solve the problems we identified in the
+previous section.
 
 Finally we'll have enough background to be able to sketch the Disruptor
 implementation of pipelines. We'll also discuss how monitoring/observability can
@@ -244,6 +244,7 @@ model (f :+++ g) es =
   let
     (xs, ys) = partitionEithers es
   in
+    -- Note that we pass in the input list, in order to perserve the order.
     merge es (model f xs) (model g ys)
   where
     merge []             []       []       = []
@@ -525,6 +526,10 @@ firefox hs-wc.svg
 
 * Mike Barker's [bruteforce solution to Guy's problem and
   benchmarks](https://github.com/mikeb01/folklore/tree/master/src/main/java/performance)
+
+* [Understanding the Disruptor, a Beginner's Guide to Hardcore
+  Concurrency](https://youtube.com/watch?v=DCdGlxBbKU4) by Trisha Gee and Mike
+  Barker (2011)
 
 * https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/
 
