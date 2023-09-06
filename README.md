@@ -387,16 +387,105 @@ We'll not repeat those things here.
 
 ## Disruptor
 
-In the previous post we used normal FIFO queues (`TQueue`s to be precise), one
-of the problems with those is that if we want to, for example, fan out one event
-to several processors we first need to copy the event to the processors queues.
+Before we can understand how the Disruptor can help us avoid the problem copying
+between queues that we just saw, we need to first understand a bit about how the
+Disruptor is implemented.
 
+We will be looking at the implementation of the single-producer Disruptor,
+because in our pipelines there will never be more than one producer per queue
+(the stage before it)[^3].
 
+Let's first have a look at the datatype and then explain each field:
 
+```haskell
+data RingBuffer a = RingBuffer
+  { capacity             :: Int
+  , elements             :: IOArray Int a
+  , cursor               :: IORef SequenceNumber
+  , gatingSequences      :: IORef (IOArray Int (IORef SequenceNumber))
+  , cachedGatingSequence :: IORef SequenceNumber
+  }
 
-This copy is one of many things that makes the Disruptor a better queue
-implementation choice.
+newtype SequenceNumber = SequenceNumber Int
+```
 
+The Disruptor is a ring buffer queue with a fixed `capacity`. It's backed by an
+array whose length is equal to the capacity, this is where the `elements` of the
+ring buffer are stored. There's a monotonically increasing counter called the
+`cursor` which keeps track of how many elements we have written. By taking the
+value of the `cursor` modulo the `capacity` we get the index into the array
+where we are supposed to write our next element (this is how we wrap around the
+array, i.e. forming a ring). In order to avoid overwriting elements which have
+not yet been consumed we also need to keep track of the cursors of all consumers
+(`gatingSeqeunces`). As an optimisation we cache where the last consumer is
+(`cachedGatingSequence`).
+
+The API from the producing side looks as follows:
+
+```haskell
+tryClaimBatch   :: RingBuffer a -> Int -> IO (Maybe SequenceNumber)
+writeRingBuffer :: RingBuffer a -> SequenceNumber -> a -> IO ()
+publish         :: RingBuffer a -> SequenceNumber -> IO ()
+```
+
+We first try to claim `n :: Int` slots in the ring buffer, if that fails
+(returns `Nothing`) then we know that there isn't space in the ring buffer and
+we should apply backpressure upstream (e.g. if the producer is a webserver, we
+might want to temporarily rejecting clients with status code 503). Once we
+successfully get a sequence number, we can start writing our data. Finally we
+publish the sequence number, this makes it available on the consumer side.
+
+The consumer side of the API looks as follows:
+
+```haskell
+addGatingSequence :: RingBuffer a -> IO (IORef SequenceNumber)
+waitFor           :: RingBuffer a -> SequenceNumber -> IO SequenceNumber
+readRingBuffer    :: RingBuffer a -> SequenceNumber -> IO a
+```
+
+First we need to add a consumer to the ring buffer (to avoid overwriting on wrap
+around of the ring), this gives us a consumer cursor. The consumer is
+responsible for updating this cursor, the ring buffer will only read from it to
+avoid overwriting. After the consumer reads the cursor, it calls `waitFor` on
+the read value, this will block until an element has been `publish`ed on that
+slot by the producer. In the case that the producer is ahead it will return the
+current sequence number of the producer, hence allowing the consumer to do a
+batch of reads (from where it currently is to where the producer currently is).
+Once the consumer has caught up with the producer it updates its cursor.
+
+Here's an example which hopefully makes things more concrete:
+
+```haskell
+example :: IO ()
+example = do
+  rb <- newRingBuffer_ 2
+  c <- addGatingSequence rb
+  let batchSize = 2
+  Just hi <- tryClaimBatch rb batchSize
+  let lo = hi - (coerce batchSize - 1)
+  assertIO (lo == 0)
+  assertIO (hi == 1)
+  -- Notice that these writes are batched:
+  mapM_ (\(i, c) -> writeRingBuffer rb i c) (zip [lo..hi] ['a'..])
+  publish rb hi
+  -- Since the ring buffer size is only two and we've written two
+  -- elements, it's full at this point:
+  Nothing <- tryClaimBatch rb 1
+  consumed <- readIORef c
+  produced <- waitFor rb consumed
+  -- The consumer can do batched reads, and only do some expensive
+  -- operation once it reaches the end of the batch:
+  xs <- mapM (readRingBuffer rb) [consumed + 1..produced]
+  assertIO (xs == "ab")
+  -- The consumer updates its cursor:
+  writeIORef c produced
+  -- Now there's space again for the producer:
+  Just 2 <- tryClaimBatch rb 1
+  return ()
+```
+
+See the `Disruptor` [module](src/Disruptor.hs) in case you are interested in the
+implementation details.
 
 ## Disruptor pipeline deployment
 
@@ -453,3 +542,9 @@ firefox hs-wc.svg
 
 [^2]: Search for "QuickCheck GADTs" if you are interested in finding out more
     about this topic.
+
+[^3]: The Disruptor also comes in a multi-producer variant, see the following
+    [repository](https://github.com/stevana/pipelined-state-machines/tree/main/src/Disruptor/MP)
+    for a Haskell version or the
+    [LMAX](https://github.com/LMAX-Exchange/disruptor) repository for the
+    original Java implementation.

@@ -60,14 +60,18 @@ executable exe
   default-language: Haskell2010
 
 test-suite test
-  import:           warnings
-  default-language: Haskell2010
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test
-  main-is:          Main.hs
+  import:             warnings
+  default-language:   Haskell2010
+  type:               exitcode-stdio-1.0
+  hs-source-dirs:     test
+  main-is:            Main.hs
+  other-modules:      DisruptorTest
+  build-tool-depends: tasty-discover:tasty-discover
   build-depends:
     , base
     , pipelining-with-disruptor
+    , tasty
+    , tasty-hunit
 
 source-repository head
   type:     git

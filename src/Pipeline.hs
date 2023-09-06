@@ -27,10 +27,21 @@ import System.IO
 import System.Process
 
 import CRC32
-import Disruptor (Counter, RingBuffer, SequenceNumber)
+import Disruptor (RingBuffer, SequenceNumber)
 import qualified Disruptor
 
 ------------------------------------------------------------------------
+
+data Counter = Counter (IORef SequenceNumber)
+
+readCounter :: Counter -> IO SequenceNumber
+readCounter = undefined
+
+writeCounter :: Counter -> SequenceNumber -> IO ()
+writeCounter = undefined
+
+combineCounters :: Counter -> Counter -> Counter
+combineCounters = undefined
 
 class HasRB a where
   data RB a :: *
@@ -76,7 +87,7 @@ instance HasRB (Input a) where
   waitFor       (RBInput _l rb) = Disruptor.waitFor rb
   readCursor    (RBInput _l rb) = Disruptor.readCursor rb
   tryRead       (RBInput _l rb) = Disruptor.readRingBuffer rb
-  addConsumer   (RBInput _l rb) = Disruptor.addGatingCounter rb
+  addConsumer   (RBInput _l rb) = Counter <$> Disruptor.addGatingSequence rb
   toList        (RBInput _l rb) = Disruptor.toList rb
 
 instance HasRB (Output a) where
@@ -92,7 +103,7 @@ instance HasRB (Output a) where
   waitFor       (RBOutput _l rb) = Disruptor.waitFor rb
   readCursor    (RBOutput _l rb) = Disruptor.readCursor rb
   tryRead       (RBOutput _l rb) = Disruptor.readRingBuffer rb
-  addConsumer   (RBOutput _l rb) = Disruptor.addGatingCounter rb
+  addConsumer   (RBOutput _l rb) = Counter <$> Disruptor.addGatingSequence rb
   toList        (RBOutput _l rb) = Disruptor.toList rb
 
 instance HasRB String where
@@ -108,7 +119,7 @@ instance HasRB String where
   waitFor       (RB _l rb) = Disruptor.waitFor rb
   readCursor    (RB _l rb) = Disruptor.readCursor rb
   tryRead       (RB _l rb) = Disruptor.readRingBuffer rb
-  addConsumer   (RB _l rb) = Disruptor.addGatingCounter rb
+  addConsumer   (RB _l rb) = Counter <$> Disruptor.addGatingSequence rb
   toList        (RB _l rb) = Disruptor.toList rb
 
 instance (HasRB a, HasRB b) => HasRB (a, b) where
@@ -121,7 +132,7 @@ instance (HasRB a, HasRB b) => HasRB (a, b) where
   addConsumer (RBPair _l xs ys) = do
     c <- addConsumer xs
     d <- addConsumer ys
-    return (Disruptor.combineCounters c d)
+    return (combineCounters c d)
   waitFor (RBPair _l xs ys) i = do
     hi <- waitFor xs i
     hj <- waitFor ys i
@@ -152,7 +163,7 @@ instance  HasRB (Either a b) where
   waitFor       (RBEither _l rb) = Disruptor.waitFor rb
   readCursor    (RBEither _l rb) = Disruptor.readCursor rb
   tryRead       (RBEither _l rb) = Disruptor.readRingBuffer rb
-  addConsumer   (RBEither _l rb) = Disruptor.addGatingCounter rb
+  addConsumer   (RBEither _l rb) = Counter <$> Disruptor.addGatingSequence rb
   toList        (RBEither _l rb) = Disruptor.toList rb
   {-
   data RB (Either a b) = RBEither (RB a) (RB b)
@@ -254,7 +265,7 @@ drawGraph g fp = withFile fp WriteMode $ \h -> do
         hPutStrLn h ("  " ++ coerce l ++ " [shape=Mrecord label=\"<lbl> " ++ coerce l ++
                      " | {" ++ s ++ "} | <seq> " ++ show i ++ "\"]")
       WorkerNode l c -> do
-        i <- Disruptor.readCounter c
+        i <- readCounter c
         hPutStrLn h ("  " ++ coerce l ++ " [shape=record label=\"<lbl> " ++ coerce l ++ " | <seq> " ++ show i ++ "\"]")
       ProducerNode l ->
         hPutStrLn h ("  " ++ coerce l ++ " [shape=record label=\"<lbl> " ++ coerce l ++ "\"]")
@@ -326,14 +337,14 @@ deploy (Transform l f) g xs = do
   addWorkerNode g l c
   addProducers g l (map (<> "_RB") (label ys))
   pid <- forkIO $ forever $ do
-    consumed <- Disruptor.readCounter c
+    consumed <- readCounter c
     produced <- waitFor xs consumed
     Disruptor.iter consumed produced $ \i -> do
       x <- tryRead xs i
       -- threadDelay 1100000 -- XXX: For debugging
       write ys i (f x)
     commitBatch ys consumed produced
-    Disruptor.writeCounter c produced
+    writeCounter c produced
   return ys
 deploy (Fold l f s0) g xs = do
   ys <- new l rB_SIZE
@@ -343,7 +354,7 @@ deploy (Fold l f s0) g xs = do
   c <- addConsumer xs
   addWorkerNode g l c
   let go s0 = do
-        consumed <- Disruptor.readCounter c
+        consumed <- readCounter c
         produced <- waitFor xs consumed
         s' <- Disruptor.fold consumed produced s0 $ \i s -> do
           x <- tryRead xs i
@@ -352,7 +363,7 @@ deploy (Fold l f s0) g xs = do
           write ys i y
           return s'
         commitBatch ys consumed produced
-        Disruptor.writeCounter c produced
+        writeCounter c produced
         go s'
   pid <- forkIO (go s0)
   return ys
@@ -434,7 +445,7 @@ runFlow (StdInOut p) = do
   addProducers g "sink" ["stdout"]
   let sink = do
         i <- readIORef stop
-        consumed <- Disruptor.readCounter c
+        consumed <- readCounter c
         produced <- readCursor ys
         -- print (i /= -1, consumed, produced, i)
         if i /= -1 && consumed == i
@@ -446,7 +457,7 @@ runFlow (StdInOut p) = do
               NoOutput -> return ()
               Output s -> putStrLn s
           -- XXX: is it worth avoiding this write when produced == consumed?
-          Disruptor.writeCounter c produced
+          writeCounter c produced
           sink
   sink `finally` do
     mapM_ killThread [pidSource, pidMetrics]
@@ -467,7 +478,7 @@ runFlow (StdInOut p) = do
 --   ys <- deploy p g xs
 --   c <- addConsumer ys
 --   let sink = do
---         consumed <- Disruptor.readCounter c
+--         consumed <- readCounter c
 --         if consumed == coerce n then return ()
 --         else do
 --           produced <- waitFor ys consumed
@@ -476,7 +487,7 @@ runFlow (StdInOut p) = do
 --             case my of
 --               NoOutput -> return ()
 --               Output y -> print y
---             Disruptor.writeCounter c produced
+--             writeCounter c produced
 --             sink
 --   sink `finally` killThread pidSource
 
