@@ -1,8 +1,8 @@
 module Main where
 
-import qualified Pipeline
+import qualified LibMain.UpperCase
 
 ------------------------------------------------------------------------
 
 main :: IO ()
-main = Pipeline.main
+main = LibMain.UpperCase.main

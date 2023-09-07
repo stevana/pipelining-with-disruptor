@@ -497,7 +497,8 @@ implementation details.
 ## Running
 
 ```bash
-cat data/test.txt | cabal run
+cat data/test.txt | cabal run uppercase
+cat data/test.txt | cabal run wc
 ```
 
 XXX: update to use cabal:

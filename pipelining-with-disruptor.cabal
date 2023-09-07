@@ -26,11 +26,15 @@ common warnings
 library
   import:           warnings
   exposed-modules:
+    Counter
     CRC32
     Disruptor
+    LibMain.UpperCase
+    LibMain.WordCount
     Model
     Pipeline
     QueueDeployment
+    RingBufferClass
     Template
     Visualise
 
@@ -49,14 +53,25 @@ library
   hs-source-dirs:   src
   default-language: Haskell2010
 
-executable exe
+executable wc
   import:           warnings
+  hs-source-dirs:   app/wc
   main-is:          Main.hs
   build-depends:
     , base
     , pipelining-with-disruptor
 
-  hs-source-dirs:   app
+  default-language: Haskell2010
+  ghc-options:      -O2 -threaded -rtsopts -with-rtsopts=-N
+
+executable uppercase
+  import:           warnings
+  hs-source-dirs:   app/uppercase
+  main-is:          Main.hs
+  build-depends:
+    , base
+    , pipelining-with-disruptor
+
   default-language: Haskell2010
   ghc-options:      -O2 -threaded -rtsopts -with-rtsopts=-N
 
