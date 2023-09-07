@@ -496,6 +496,10 @@ implementation details.
 
 ## Running
 
+```bash
+cat data/test.txt | cabal run
+```
+
 XXX: update to use cabal:
 ```bash
 ghc -O2 src/Pipeline.hs -o ./hs-wc -threaded -prof -fprof-auto -rtsopts
