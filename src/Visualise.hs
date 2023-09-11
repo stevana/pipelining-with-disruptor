@@ -2,15 +2,16 @@
 
 module Visualise where
 
+import Control.Exception (mask_)
 import Control.Monad
 import qualified Data.ByteString as BS
+import Data.Coerce
 import Data.IORef
 import Data.List (intersperse, sort)
-import System.IO
-import System.Process
-import Data.Coerce
 import System.Directory
 import System.FilePath (takeExtension, (</>))
+import System.IO
+import System.Process
 
 import Counter
 import CRC32
@@ -55,8 +56,9 @@ addProducers g src dsts = mapM_ (\dst -> modifyIORef' (gEdges g) (Produces src d
 addConsumers :: Graph -> [Label] -> Label -> IO ()
 addConsumers g dsts src = mapM_ (\dst -> modifyIORef' (gEdges g) (Consumes src dst :)) dsts
 
+-- XXX: use TextBuilder and do a single hPutStrLn...
 drawGraph :: Graph -> FilePath -> IO ()
-drawGraph g fp = withFile fp WriteMode $ \h -> do
+drawGraph g fp = mask_ $ withFile fp WriteMode $ \h -> do
   nodes <- reverse <$> readIORef (gNodes g)
   edges <- reverse <$> readIORef (gEdges g)
   hPutStrLn h "digraph g {"
@@ -64,7 +66,7 @@ drawGraph g fp = withFile fp WriteMode $ \h -> do
   forM_ nodes $ \node ->
     case node of
       RingBufferNode l r -> do
-        i <- readIORef (cursor r)
+        i <- readCounter (cursor r)
         xs <- toList r
         let s = concat (intersperse " | " (map show xs))
         hPutStrLn h ("  " ++ coerce l ++ " [shape=Mrecord label=\"<lbl> " ++ coerce l ++

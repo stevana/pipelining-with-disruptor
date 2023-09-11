@@ -12,6 +12,7 @@ import Data.IORef
 import Data.Time
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
+import System.Random
 
 import Counter
 import qualified Disruptor
@@ -69,7 +70,9 @@ deploy (Transform l f) g xs = do
     produced <- waitFor xs consumed
     Disruptor.iter consumed produced $ \i -> do
       x <- tryRead xs i
-      -- threadDelay 1100000 -- XXX: For debugging
+      -- XXX: For debugging:
+      delay <- randomRIO (50000, 3000000)
+      threadDelay delay
       write ys i (f x)
     commitBatch ys consumed produced
     writeCounter c produced
@@ -87,7 +90,9 @@ deploy (Fold l f s00) g xs = do
         s' <- Disruptor.fold consumed produced s0 $ \i s -> do
           x <- tryRead xs i
           let (s', y) = f x s
-          -- threadDelay 1050000 -- XXX: For debugging
+          -- XXX: For debugging:
+          delay <- randomRIO (50000, 3000000)
+          threadDelay delay
           write ys i y
           return s'
         commitBatch ys consumed produced
@@ -139,7 +144,9 @@ runFlow (StdInOut p) = do
   let source = do
         es <- fmap Input getLine `catch` (\(_e :: IOError) -> return EndOfStream)
         i <- claim xs 1
-        threadDelay 100000 -- XXX: For debugging
+        -- XXX: For debugging:
+        delay <- randomRIO (50000, 3000000)
+        threadDelay delay
         write xs i es
         commit xs i
         case es of
@@ -153,11 +160,11 @@ runFlow (StdInOut p) = do
   addSourceOrSinkNode g "stdout"
   addProducers g "sink" ["stdout"]
   let sink = do
-        i <- readIORef stop
+        stopping <- readIORef stop
         consumed <- readCounter c
         produced <- readCursor ys
         -- NOTE: `waitFor` is inlined here, so that we can stop.
-        if i /= -1 && consumed == i
+        if stopping /= -1 && consumed == stopping
         then return ()
         else do
           Disruptor.iter consumed produced $ \i -> do
@@ -172,6 +179,8 @@ runFlow (StdInOut p) = do
           sink
   sink `finally` do
     mapM_ killThread [pidSource, pidMetrics]
+    t <- getCurrentTime
+    drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dateFormat t ++ ".dot")
     runDot dir
     runFeh dir
 runFlow (List _xs0 _p) = undefined

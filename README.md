@@ -494,6 +494,8 @@ implementation details.
 
 ## Monitoring
 
+* https://github.com/stevana/svg-viewer-in-svg#svg-viewer-written-in-svg
+
 ## Running
 
 ```bash

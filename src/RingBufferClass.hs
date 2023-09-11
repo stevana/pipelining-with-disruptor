@@ -4,12 +4,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE StrictData #-}
 
 module RingBufferClass where
 
 import Control.Concurrent
-import Data.IORef
 import Data.String
+import Data.Kind (Type)
 
 import Counter
 import Disruptor (RingBuffer, SequenceNumber)
@@ -20,8 +21,8 @@ import qualified Disruptor
 newtype Label = Label String
   deriving (Eq, Show, IsString, Semigroup, Monoid)
 
-data Input  a = Input  !a | EndOfStream
-data Output b = Output !b | NoOutput
+data Input  a = Input  a | EndOfStream
+data Output b = Output b | NoOutput
 
 instance Show a => Show (Input a) where
   show (Input x)   = escape $ show x
@@ -44,9 +45,9 @@ escape (c   : cs) = c : escape cs
 ------------------------------------------------------------------------
 
 class HasRB a where
-  data RB a :: *
+  data RB a :: Type
   new           :: Label -> Int -> IO (RB a)
-  cursor        :: RB a -> IORef SequenceNumber
+  cursor        :: RB a -> Counter
   label         :: RB a -> [Label]
   tryClaim      :: RB a -> IO (Maybe SequenceNumber)
   tryClaimBatch :: RB a -> Int -> IO (Maybe SequenceNumber)
@@ -73,10 +74,53 @@ claimBatch rb n millis = do
     Nothing -> threadDelay millis >> claimBatch rb n millis
     Just i  -> return i
 
+instance (HasRB a, HasRB b) => HasRB (a, b) where
+  data RB (a, b) = RBPair [Label] (RB a) (RB b)
+  new l n = RBPair [l] <$> new l n <*> new l n
+  cursor (RBPair _l xs ys) = cursor xs `combineCounters` cursor ys
+  label (RBPair  l _xs _ys) = l
+  tryClaim (RBPair _l xs ys) = do
+    mi <- tryClaim xs
+    mj <- tryClaim ys
+    return (min mi mj) -- XXX: assert mi == mj?
+  tryClaimBatch (RBPair _l xs ys) n = do
+    mi <- tryClaimBatch xs n
+    mj <- tryClaimBatch ys n
+    return (min mi mj)
+  addConsumer (RBPair _l xs ys) = do
+    c <- addConsumer xs
+    d <- addConsumer ys
+    return (combineCounters c d)
+  waitFor (RBPair _l xs ys) i = do
+    hi <- waitFor xs i
+    hj <- waitFor ys i
+    return (min hi hj)
+  tryRead (RBPair _l xs ys) i = do
+    x <- tryRead xs i
+    y <- tryRead ys i
+    return (x, y)
+  write (RBPair _l xs ys) i (x, y) = do
+    write xs i x
+    write ys i y
+  commit (RBPair _l xs ys) i = do
+    commit xs i
+    commit ys i
+  commitBatch (RBPair _l xs ys) lo hi = do
+    commitBatch xs lo hi
+    commitBatch ys lo hi
+  readCursor (RBPair _l xs ys) = do
+    i <- readCursor xs
+    j <- readCursor ys
+    return (min i j)
+  toList (RBPair _l xs ys) = do
+    xs' <- toList xs
+    ys' <- toList ys
+    return (zip xs' ys')
+
 instance HasRB (Input a) where
   data RB (Input a)             = RBInput [Label] (RingBuffer (Input a))
   new l n                       = RBInput [l] <$> Disruptor.newRingBuffer_ n
-  cursor        (RBInput _l rb) = Disruptor.rbCursor rb
+  cursor        (RBInput _l rb) = makeCounter (Disruptor.rbCursor rb)
   label         (RBInput l _rb) = l
   tryClaim      (RBInput _l rb) = Disruptor.tryClaim rb
   tryClaimBatch (RBInput _l rb) = Disruptor.tryClaimBatch rb
@@ -92,7 +136,7 @@ instance HasRB (Input a) where
 instance HasRB (Output a) where
   data RB (Output a)          = RBOutput [Label] (RingBuffer (Output a))
   new l n                     = RBOutput [l] <$> Disruptor.newRingBuffer_ n
-  cursor        (RBOutput _l rb) = Disruptor.rbCursor rb
+  cursor        (RBOutput _l rb) = makeCounter (Disruptor.rbCursor rb)
   label         (RBOutput  l _rb) = l
   tryClaim      (RBOutput _l rb) = Disruptor.tryClaim rb
   tryClaimBatch (RBOutput _l rb) = Disruptor.tryClaimBatch rb
@@ -108,7 +152,7 @@ instance HasRB (Output a) where
 instance HasRB String where
   data RB String           = RB [Label] (RingBuffer String)
   new l n                  = RB [l] <$> Disruptor.newRingBuffer_ n
-  cursor        (RB _l rb) = Disruptor.rbCursor rb
+  cursor        (RB _l rb) = makeCounter (Disruptor.rbCursor rb)
   label         (RB  l _rb) = l
   tryClaim      (RB _l rb) = Disruptor.tryClaim rb
   tryClaimBatch (RB _l rb) = Disruptor.tryClaimBatch rb
@@ -121,38 +165,11 @@ instance HasRB String where
   addConsumer   (RB _l rb) = makeCounter <$> Disruptor.addGatingSequence rb
   toList        (RB _l rb) = Disruptor.toList rb
 
-instance (HasRB a, HasRB b) => HasRB (a, b) where
-  data RB (a, b) = RBPair [Label] (RB a) (RB b)
-  new l n = RBPair [l] <$> new l n <*> new l n
-  cursor        (RBPair _l xs ys) = undefined
-  label         (RBPair  l _xs _ys) = l
-  tryClaim rb = undefined
-  tryClaimBatch rb = undefined
-  addConsumer (RBPair _l xs ys) = do
-    c <- addConsumer xs
-    d <- addConsumer ys
-    return (combineCounters c d)
-  waitFor (RBPair _l xs ys) i = do
-    hi <- waitFor xs i
-    hj <- waitFor ys i
-    return (min hi hj)
-  tryRead (RBPair _l xs ys) i = do
-    x <- tryRead xs i
-    y <- tryRead ys i
-    return (x, y)
-  write = undefined
-  commit = undefined
-  commitBatch = undefined
-  readCursor = undefined
-  toList (RBPair _l xs ys) = do
-    xs' <- toList xs
-    ys' <- toList ys
-    return (zip xs' ys')
 
 instance  HasRB (Either a b) where
   data RB (Either a b)        = RBEither [Label] (RingBuffer (Either a b))
   new l n                     = RBEither [l] <$> Disruptor.newRingBuffer_ n
-  cursor        (RBEither _l rb) = Disruptor.rbCursor rb
+  cursor        (RBEither _l rb) = makeCounter (Disruptor.rbCursor rb)
   label         (RBEither  l _rb) = l
   tryClaim      (RBEither _l rb) = Disruptor.tryClaim rb
   tryClaimBatch (RBEither _l rb) = Disruptor.tryClaimBatch rb
