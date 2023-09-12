@@ -490,6 +490,73 @@ implementation details.
 
 ## Disruptor pipeline deployment
 
+Recall that the reason we introduced the Disrutor was to avoid copying elements
+of the queue when fanning out (using the `:&&&` combinator).
+
+The idea would be to have the workers we fan out to both be consumers of the
+same Disruptor, that way the inputs don't need to be copied.
+
+Avoiding to copy the individual outputs from the worker's queues (of `a`s and
+`b`s) into the combined output (of `(a, b)`s) is a bit tricker.
+
+One way, that I think works, is to do something reminiscent what
+[`Data.Vector`](https://hackage.haskell.org/package/vector) does for pairs.
+That's a vector of pairs (`Vector (a, b)`) is actually represented as a pair of
+vectors (`(Vector a, Vector b)`)[^4].
+
+We can achieve this with [associated
+types](http://simonmar.github.io/bib/papers/assoc.pdf) as follows:
+
+```haskell
+class HasRB a where
+  data RB a :: Type
+  newRB               :: Int -> IO (RB a)
+  tryClaimBatchRB     :: RB a -> Int -> IO (Maybe SequenceNumber)
+  writeRingBufferRB   :: RB a -> SequenceNumber -> a -> IO ()
+  publishRB           :: RB a -> SequenceNumber -> IO ()
+  addGatingSequenceRB :: RB a -> IO Counter
+  waitForRB           :: RB a -> SequenceNumber -> IO SequenceNumber
+  readRingBufferRB    :: RB a -> SequenceNumber -> IO a
+```
+
+The instances for this class for types that are not pairs will just use the
+Disruptor that we defined above.
+
+```haskell
+instance HasRB String where
+  data RB String = RB (RingBuffer String)
+  newRB n        = RB <$> newRingBuffer_ n
+```
+
+While the instance for pairs will use a pair of Disruptors:
+
+```haskell
+instance (HasRB a, HasRB b) => HasRB (a, b) where
+  data RB (a, b) = RBPair (RB a) (RB b)
+  newRB n = RBPair <$> newRB n <*> newRB n
+  ...
+```
+
+The `deploy` function for the fanout combinator can now avoid copying:
+
+```haskell
+deploy :: (HasRB a, HasRB b) => P a b -> RB a -> IO (RB b)
+deploy (p :&&& q) xs = do
+  ys <- deploy p xs
+  zs <- deploy q xs
+  return (RBPair ys zs)
+```
+
+Side note: unfortunately we also need to add `HasRB` constraints to our pipeline
+type as well:
+
+```haskell
+data P :: Type -> Type -> Type where
+  (:&&&) :: (HasRB b, HasRB c) => P a b -> P a c -> P a (b, c)
+```
+
+While easy to do, it breaks our `Arrow` instance[^5].
+
 ## Example
 
 ## Monitoring
@@ -560,3 +627,10 @@ firefox hs-wc.svg
     for a Haskell version or the
     [LMAX](https://github.com/LMAX-Exchange/disruptor) repository for the
     original Java implementation.
+
+[^4]: See also [array of structures vs structure of
+    arrays](https://en.wikipedia.org/wiki/AoS_and_SoA) in other programming
+    languages.
+
+[^5]: I'm not sure what the best way to fix this is, perhaps using the
+    constrained/restricted monad trick?
