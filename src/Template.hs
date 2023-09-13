@@ -27,10 +27,11 @@ template blank = go 0 [] . T.breakOnAll blank
 -- | >>> instantiate (template "_" "hello _") ["world!"]
 --   "hello world!"
 instantiate :: Template -> [Text] -> Text
-instantiate (Template xs) ys =
-  assert (length (filter (== Blank) xs) == length ys) $
-    go xs ys mempty
+instantiate (Template xs0) ys0 =
+  assert (length (filter (== Blank) xs0) == length ys0) $
+    go xs0 ys0 mempty
   where
     go []           []       acc = TL.toStrict (TB.toLazyText acc)
     go (Blank : xs) (y : ys) acc = go xs ys (acc <> TB.fromText y)
     go (Text x : xs) ys      acc = go xs ys (acc <> TB.fromText x)
+    go _ _ _ = error "instantiate: impossible"

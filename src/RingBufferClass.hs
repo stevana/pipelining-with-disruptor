@@ -2,15 +2,17 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeSynonymInstances #-}
-{-# LANGUAGE StrictData #-}
 
 module RingBufferClass where
 
 import Control.Concurrent
-import Data.String
+import Data.Bits
+import Data.Coerce
 import Data.Kind (Type)
+import Data.String
 
 import Counter
 import Disruptor (RingBuffer, SequenceNumber)
@@ -73,6 +75,68 @@ claimBatch rb n millis = do
   case mi of
     Nothing -> threadDelay millis >> claimBatch rb n millis
     Just i  -> return i
+
+newtype Sharded a = Sharded a
+  deriving Show
+
+data Sharding = Sharding
+  { sIndex :: Int
+  , sTotal :: Int
+  }
+  deriving Show
+
+noSharding :: Sharding
+noSharding = Sharding 0 1
+
+addShard :: Sharding -> (Sharding, Sharding)
+addShard (Sharding i total) = (Sharding i (total * 2), Sharding (i + total) (total * 2))
+
+partition :: Disruptor.SequenceNumber -> Sharding -> Bool
+partition i (Sharding n total) = coerce i .&. (total - 1) == 0 + n
+
+instance HasRB a => HasRB (Sharded a) where
+  data RB (Sharded a) = RBShard [Label] Sharding Sharding (RB a) (RB a)
+  new l n = error "new, RBShard: shouldn't be created explicitly"
+  cursor (RBShard _l _s1 _s2 xs ys) = cursor xs `combineCounters` cursor ys
+  label (RBShard  l _s1 _s2 _xs _ys) = l
+  tryClaim (RBShard _l _s1 _s2 xs ys) = undefined
+  tryClaimBatch (RBShard _l _s1 _s2 xs ys) n = undefined
+  addConsumer (RBShard _l _s1 _s2 xs ys) = do
+    c <- addConsumer xs
+    d <- addConsumer ys
+    return (combineCounters c d)
+  waitFor (RBShard _l s1 s2 xs ys) i = do
+    if partition i s1
+    then waitFor xs i
+    else if partition i s2
+         then waitFor ys i
+         else error "waitFor, RBShard"
+  tryRead (RBShard _l s1 s2 xs ys) i = do
+    if partition i s1
+    then coerce (tryRead xs i)
+    else if partition i s2
+         then coerce (tryRead ys i)
+         else error "tryRead, RBShard"
+  write (RBShard _l s1 s2 xs ys) i x = do
+    undefined
+    -- write xs i x
+    -- write ys i y
+  commit (RBShard _l s1 s2 xs ys) i = do
+    undefined
+  commitBatch (RBShard _l s1 s2 xs ys) lo hi = do
+    undefined
+  readCursor (RBShard _l s1 s2 xs ys) = do
+    i <- readCursor xs
+    j <- readCursor ys
+    return (min i j)
+  toList (RBShard _l _s1 _s2 xs ys) = do
+    xs' <- toList xs
+    ys' <- toList ys
+    return (interleave xs' ys')
+    where
+      interleave [] ys = map Sharded ys
+      interleave xs [] = map Sharded xs
+      interleave (x : xs) (y : ys) = Sharded x : Sharded y : interleave xs ys
 
 instance (HasRB a, HasRB b) => HasRB (a, b) where
   data RB (a, b) = RBPair [Label] (RB a) (RB b)

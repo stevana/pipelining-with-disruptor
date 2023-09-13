@@ -21,6 +21,7 @@ data P :: Type -> Type -> Type where
   (:&&&)  :: P a b -> P a c -> P a (b, c)
   (:+++)  :: P a c -> P b d -> P (Either a b) (Either c d)
   (:|||)  :: P a c -> P b c -> P (Either a b) c
+  Shard   :: P a b -> P a b
 
 ------------------------------------------------------------------------
 
@@ -59,6 +60,7 @@ model (f :||| g) es0 =
     merge (Left  _ : es) (l : ls) rs       = l : merge es ls rs
     merge (Right _ : es) ls       (r : rs) = r : merge es ls rs
     merge _ _ _ = error "impossible"
+model (Shard f) xs = model f xs
 
 example :: [Int] -> [(Int, Bool)]
 example = model examplePipeline

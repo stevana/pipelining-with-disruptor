@@ -555,7 +555,7 @@ data P :: Type -> Type -> Type where
   (:&&&) :: (HasRB b, HasRB c) => P a b -> P a c -> P a (b, c)
 ```
 
-While easy to do, it breaks our `Arrow` instance[^5].
+While easy to do, we'll no longer be able to implement the `Arrow` instance[^5].
 
 ## Example
 
