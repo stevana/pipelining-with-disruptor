@@ -151,6 +151,11 @@ Don't have a good deploy, upgrade, rescale story.
 * Disruptor wizard
 * Aeron
 
+### Erlang / Elixir
+
+* https://elixir-lang.org/blog/2016/07/14/announcing-genstage/
+* https://hexdocs.pm/gen_stage/1.0.0/GenStage.html
+
 ### Dataflow
 
 * Lustre / SCADA / Esterel

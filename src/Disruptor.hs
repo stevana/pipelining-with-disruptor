@@ -25,7 +25,6 @@ import Data.Bits
 import Data.Coerce
 import Data.IORef
 import Data.Ix (Ix)
-import GHC.Stack
 
 ------------------------------------------------------------------------
 -- * Types

@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Pipeline (module Pipeline, module RingBufferClass) where
+module Pipeline (module Pipeline, Input(..), Output(..), module Sharding) where
 
 import Control.Concurrent
 import Control.Exception
@@ -18,6 +18,7 @@ import Counter
 import qualified Disruptor
 import RingBufferClass
 import Visualise
+import Sharding
 
 ------------------------------------------------------------------------
 
@@ -67,7 +68,8 @@ deploy (p :&&& q) e xs = do
 deploy (Transform l f) e xs = do
   ys <- new (l <> "_RB") rB_SIZE
   let g = deGraph e
-  addRingBufferNode g (l <> "_RB") ys
+      s = deSharding e
+  addRingBufferNode g (l <> "_RB") s ys
   addConsumers g (label xs) l
   c <- addConsumer xs
   addWorkerNode g l c
@@ -79,7 +81,7 @@ deploy (Transform l f) e xs = do
       when (partition i (deSharding e)) $ do
         x <- tryRead xs i
         -- XXX: For debugging:
-        delay <- randomRIO (50000, 3000000)
+        delay <- randomRIO (50000, 300000)
         threadDelay delay
         write ys i (f x)
     commitBatch ys consumed produced
@@ -88,7 +90,8 @@ deploy (Transform l f) e xs = do
 deploy (Fold l f s00) e xs = do
   ys <- new (l <> "_RB") rB_SIZE
   let g = deGraph e
-  addRingBufferNode g (l <> "_RB") ys
+      s = deSharding e
+  addRingBufferNode g (l <> "_RB") s ys
   addConsumers g (label xs) l
   addProducers g l (label ys)
   c <- addConsumer xs
@@ -119,11 +122,6 @@ deploy (Shard p) e xs  = do
   let (s1, s2) = addShard (deSharding e)
   ys1 <- deploy p (e { deSharding = s1 }) xs
   ys2 <- deploy p (e { deSharding = s2 }) xs
-  -- ys <- new "Shard_RB" rB_SIZE
-  -- let g = deGraph e
-  -- addRingBufferNode g "Shard_RB" ys
-  -- addProducers g ("Shard " <> Label (show (sIndex s1))) (label ys)
-  -- addProducers g ("Shard " <> Label (show (sIndex s2))) (label ys)
   return (RBShard (label ys1 ++ label ys2) s1 s2 ys1 ys2)
 
   {-
@@ -151,7 +149,7 @@ runFlow (StdInOut p) = do
   addProducerNode g "source"
   addProducers g "stdin" ["source"]
   addProducers g "source" ["source_RB"]
-  addRingBufferNode g "source_RB" xs
+  addRingBufferNode g "source_RB" noSharding xs
   ys <- deploy p (DeployEnv g noSharding) xs
   stop <- newIORef (-1)
 
@@ -159,17 +157,21 @@ runFlow (StdInOut p) = do
   let dateFormat = "%F_%T%Q" -- YYYY-MM-DD_HH:MM:SS.PICOS
   let dir = "/tmp/wc-metrics-" ++ formatTime defaultTimeLocale dateFormat t0
   createDirectoryIfMissing True dir
-  let metrics = forever $ do
+  let metrics = do
         t <- getCurrentTime
         drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dateFormat t ++ ".dot")
         threadDelay 1000 -- 0.001s
+        stopping <- readIORef stop
+        if stopping == (-1)
+        then metrics
+        else return ()
   pidMetrics <- forkIO metrics
 
   let source = do
         es <- fmap Input getLine `catch` (\(_e :: IOError) -> return EndOfStream)
         i <- claim xs 1
         -- XXX: For debugging:
-        delay <- randomRIO (50000, 3000000)
+        delay <- randomRIO (5000, 30000)
         threadDelay delay
         write xs i es
         commit xs i
@@ -215,7 +217,7 @@ runFlow (StdInOutSharded p) = do
   addProducerNode g "source"
   addProducers g "stdin" ["source"]
   addProducers g "source" ["source_RB"]
-  addRingBufferNode g "source_RB" xs
+  addRingBufferNode g "source_RB" noSharding xs
   ys <- deploy p (DeployEnv g noSharding) xs
   stop <- newIORef (-1)
 
@@ -234,7 +236,7 @@ runFlow (StdInOutSharded p) = do
         es <- fmap Input getLine `catch` (\(_e :: IOError) -> return EndOfStream)
         i <- claim xs 1
         -- XXX: For debugging:
-        delay <- randomRIO (50000, 3000000)
+        delay <- randomRIO (5000, 30000)
         threadDelay delay
         write xs i es
         commit xs i
@@ -267,7 +269,7 @@ runFlow (StdInOutSharded p) = do
                         -- loop... Not sure why.
           sink
   sink `finally` do
-    mapM_ killThread [pidSource, pidMetrics]
+    -- mapM_ killThread [pidSource, pidMetrics]
     t <- getCurrentTime
     drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dateFormat t ++ ".dot")
     runDot dir

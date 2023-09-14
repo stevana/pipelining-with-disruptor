@@ -17,11 +17,12 @@ import Data.String
 import Counter
 import Disruptor (RingBuffer, SequenceNumber)
 import qualified Disruptor
+import Sharding
 
 ------------------------------------------------------------------------
 
 newtype Label = Label String
-  deriving (Eq, Show, IsString, Semigroup, Monoid)
+  deriving (Eq, Ord, Show, IsString, Semigroup, Monoid)
 
 data Input  a = Input  a | EndOfStream
 data Output b = Output b | NoOutput
@@ -61,6 +62,7 @@ class HasRB a where
   tryRead       :: RB a -> SequenceNumber -> IO a
   addConsumer   :: RB a -> IO Counter
   toList        :: RB a -> IO [a]
+  toListSharded :: RB a -> Sharding -> IO [a]
 
 claim :: HasRB a => RB a -> Int -> IO SequenceNumber
 claim rb millis = do
@@ -75,24 +77,6 @@ claimBatch rb n millis = do
   case mi of
     Nothing -> threadDelay millis >> claimBatch rb n millis
     Just i  -> return i
-
-newtype Sharded a = Sharded a
-  deriving Show
-
-data Sharding = Sharding
-  { sIndex :: Int
-  , sTotal :: Int
-  }
-  deriving Show
-
-noSharding :: Sharding
-noSharding = Sharding 0 1
-
-addShard :: Sharding -> (Sharding, Sharding)
-addShard (Sharding i total) = (Sharding i (total * 2), Sharding (i + total) (total * 2))
-
-partition :: Disruptor.SequenceNumber -> Sharding -> Bool
-partition i (Sharding n total) = coerce i .&. (total - 1) == 0 + n
 
 instance HasRB a => HasRB (Sharded a) where
   data RB (Sharded a) = RBShard [Label] Sharding Sharding (RB a) (RB a)
@@ -128,10 +112,10 @@ instance HasRB a => HasRB (Sharded a) where
   readCursor (RBShard _l s1 s2 xs ys) = do
     i <- readCursor xs
     j <- readCursor ys
-    return (min i j)
-  toList (RBShard _l _s1 _s2 xs ys) = do
-    xs' <- toList xs
-    ys' <- toList ys
+    return (max i j)
+  toList (RBShard _l s1 s2 xs ys) = do
+    xs' <- toListSharded xs s1
+    ys' <- toListSharded ys s2
     return (interleave xs' ys')
     where
       interleave [] ys = map Sharded ys
@@ -180,6 +164,10 @@ instance (HasRB a, HasRB b) => HasRB (a, b) where
     xs' <- toList xs
     ys' <- toList ys
     return (zip xs' ys')
+  toListSharded (RBPair _l xs ys) s = do
+    xs' <- toListSharded xs s
+    ys' <- toListSharded ys s
+    return (zip xs' ys')
 
 instance HasRB (Input a) where
   data RB (Input a)             = RBInput [Label] (RingBuffer (Input a))
@@ -196,6 +184,7 @@ instance HasRB (Input a) where
   tryRead       (RBInput _l rb) = Disruptor.readRingBuffer rb
   addConsumer   (RBInput _l rb) = makeCounter <$> Disruptor.addGatingSequence rb
   toList        (RBInput _l rb) = Disruptor.toList rb
+  toListSharded (RBInput _l rb) = toListSharded_ rb
 
 instance HasRB (Output a) where
   data RB (Output a)          = RBOutput [Label] (RingBuffer (Output a))
@@ -212,6 +201,7 @@ instance HasRB (Output a) where
   tryRead       (RBOutput _l rb) = Disruptor.readRingBuffer rb
   addConsumer   (RBOutput _l rb) = makeCounter <$> Disruptor.addGatingSequence rb
   toList        (RBOutput _l rb) = Disruptor.toList rb
+  toListSharded (RBOutput _l rb) = toListSharded_ rb
 
 instance HasRB String where
   data RB String           = RB [Label] (RingBuffer String)
@@ -228,7 +218,7 @@ instance HasRB String where
   tryRead       (RB _l rb) = Disruptor.readRingBuffer rb
   addConsumer   (RB _l rb) = makeCounter <$> Disruptor.addGatingSequence rb
   toList        (RB _l rb) = Disruptor.toList rb
-
+  toListSharded (RB _l rb) = toListSharded_ rb
 
 instance  HasRB (Either a b) where
   data RB (Either a b)        = RBEither [Label] (RingBuffer (Either a b))
@@ -245,6 +235,7 @@ instance  HasRB (Either a b) where
   tryRead       (RBEither _l rb) = Disruptor.readRingBuffer rb
   addConsumer   (RBEither _l rb) = makeCounter <$> Disruptor.addGatingSequence rb
   toList        (RBEither _l rb) = Disruptor.toList rb
+  toListSharded (RBEither _l rb) = toListSharded_ rb
   {-
   data RB (Either a b) = RBEither (RB a) (RB b)
   new n = RBEither <$> new n <*> new n

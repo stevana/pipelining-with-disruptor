@@ -1,29 +1,43 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Visualise where
 
-import Control.Exception (mask_)
 import Control.Monad
 import qualified Data.ByteString as BS
 import Data.Coerce
+import qualified Data.Map as Map
 import Data.IORef
-import Data.List (intersperse, sort)
+import Data.Function (on)
+import Data.List (intersperse, sort, groupBy, sortBy)
+import qualified Data.Text.Lazy.IO as T
 import System.Directory
 import System.FilePath (takeExtension, (</>))
 import System.IO
 import System.Process
+import Data.Text.Lazy.Builder
 
 import Counter
 import CRC32
 import RingBufferClass
+import Sharding
 
 ------------------------------------------------------------------------
 
 data Node
-  = forall a. (HasRB a, Show a) => RingBufferNode Label (RB a)
+  = forall a. (HasRB a, Show a) => RingBufferNode Label Sharding (RB a)
   | WorkerNode Label Counter
   | SourceOrSinkNode Label
   | ProducerNode Label
+
+instance Show Node where
+  show = show . nodeLabel
+
+nodeLabel :: Node -> Label
+nodeLabel (RingBufferNode l _ _) = l
+nodeLabel (WorkerNode l _)       = l
+nodeLabel (SourceOrSinkNode l)   = l
+nodeLabel (ProducerNode l)       = l
 
 data Edge = Consumes Label Label | Produces Label Label
 
@@ -44,8 +58,8 @@ addSourceOrSinkNode g l = modifyIORef' (gNodes g) (SourceOrSinkNode l :)
 addProducerNode :: Graph -> Label -> IO ()
 addProducerNode g l = modifyIORef' (gNodes g) (ProducerNode l :)
 
-addRingBufferNode :: (HasRB a, Show a) => Graph -> Label -> RB a -> IO ()
-addRingBufferNode g l r = modifyIORef' (gNodes g) (RingBufferNode l r :)
+addRingBufferNode :: (HasRB a, Show a) => Graph -> Label -> Sharding -> RB a -> IO ()
+addRingBufferNode g l s rb = modifyIORef' (gNodes g) (RingBufferNode l s rb :)
 
 addEdge :: Graph -> Edge -> IO ()
 addEdge g e = modifyIORef' (gEdges g) (e :)
@@ -56,42 +70,78 @@ addProducers g src dsts = mapM_ (\dst -> modifyIORef' (gEdges g) (Produces src d
 addConsumers :: Graph -> [Label] -> Label -> IO ()
 addConsumers g dsts src = mapM_ (\dst -> modifyIORef' (gEdges g) (Consumes src dst :)) dsts
 
--- XXX: use TextBuilder and do a single hPutStrLn...
+combineSharded :: [Node] -> [[Node]]
+combineSharded
+  = groupBy ((==) `on` nodeLabel)
+  . sortBy (compare `on` nodeLabel)
+
+drawList :: [String] -> Builder
+drawList xs0 = fromText "{ " <> go xs0 <> fromText " }"
+  where
+    go []       = mempty
+    go [x]      = fromString x
+    go (x : xs) = fromString x <> fromText " | " <> go xs
+
+drawLists :: [[String]] -> Builder
+drawLists []         = mempty
+drawLists [xs]       = drawList xs
+drawLists (xs : xss) = drawList xs <> " | " <> drawLists xss
+
 drawGraph :: Graph -> FilePath -> IO ()
-drawGraph g fp = mask_ $ withFile fp WriteMode $ \h -> do
+drawGraph g fp = do
   nodes <- reverse <$> readIORef (gNodes g)
   edges <- reverse <$> readIORef (gEdges g)
-  hPutStrLn h "digraph g {"
 
-  forM_ nodes $ \node ->
+  nodes' <- forM (combineSharded nodes) $ \node ->
     case node of
-      RingBufferNode l r -> do
-        i <- readCounter (cursor r)
-        xs <- toList r
-        let s = concat (intersperse " | " (map show xs))
-        hPutStrLn h ("  " ++ coerce l ++ " [shape=Mrecord label=\"<lbl> " ++ coerce l ++
-                     " | {" ++ s ++ "} | <seq> " ++ show i ++ "\"]")
-      WorkerNode l c -> do
-        i <- readCounter c
-        hPutStrLn h ("  " ++ coerce l ++ " [shape=record label=\"<lbl> " ++ coerce l ++ " | <seq> " ++ show i ++ "\"]")
-      ProducerNode l ->
-        hPutStrLn h ("  " ++ coerce l ++ " [shape=record label=\"<lbl> " ++ coerce l ++ "\"]")
-      SourceOrSinkNode l ->
-        hPutStrLn h ("  " ++ coerce l ++ " [shape=none]")
-
-  hPutStrLn h ""
+      rbns@(RingBufferNode l _ _ : _) -> do
+        ixss <- forM rbns $ \(RingBufferNode _l s rb) -> do
+          i  <- readCounter (cursor rb)
+          xs <- map show <$> toListSharded rb s
+          return (i, xs)
+        let (is, xss) = unzip ixss
+            k         = maximum is
+            elements  = drawLists xss
+        return (l, fromText "  " <> fromString (coerce l) <> fromText " [shape=Mrecord label=\"<lbl> " <>
+                fromString (coerce l) <> fromText " | " <> elements <> " | <seq> " <>
+                fromString (show k) <> fromText "\"]\n")
+      wns@(WorkerNode l _ : _) -> do
+        is <- forM wns $ \(WorkerNode _l c) ->
+          readCounter c
+        let i = minimum is
+        return (l, fromText "  " <> fromString (coerce l) <> fromText " [shape=record label=\"<lbl> " <>
+                fromString (coerce l) <> fromText " | <seq> " <> fromString (show i) <> fromText "\"]\n")
+      [ProducerNode l] ->
+        return (l ,fromText "  " <> fromString (coerce l) <> fromText " [shape=record label=\"<lbl> " <>
+                fromString (coerce l) <> fromText "\"]\n")
+      [SourceOrSinkNode l] ->
+        return (l, fromText "  " <> fromString (coerce l) <> fromText " [shape=none]\n")
+      _otherwise -> error (show _otherwise)
 
   let sourceOrSink = foldMap (\node -> case node of
                                          SourceOrSinkNode l -> [l]
                                          _otherwise -> []) nodes
-  forM_ edges $ \edge ->
+  edges' <- forM edges $ \edge ->
     case edge of
       Produces from to ->
-        hPutStrLn h ("  " ++ coerce from ++ " -> " ++ coerce to ++ if to `elem` sourceOrSink then "" else ":lbl")
-      Consumes from to -> hPutStrLn h ("  " ++ coerce from ++ " -> " ++ coerce to ++ ":seq [style=dashed]")
+        return (fromText "  " <> fromString (coerce from) <> fromText " -> " <>
+                fromString (coerce to) <> if to `elem` sourceOrSink then fromText "\n" else fromText ":lbl\n")
+      Consumes from to -> return (fromText "  " <> fromString (coerce from) <> " -> " <>
+                                  fromString (coerce to) <> fromText ":seq [style=dashed]\n")
 
-  hPutStrLn h "}"
-  hFlush h
+  -- Preserve the original order in which nodes appear.
+  let texts   = Map.fromList nodes'
+      nodes'' = map (\n -> texts Map.! nodeLabel n) nodes
+
+  let builder = mconcat
+        [ fromText "digraph g {\n"
+        , mconcat nodes''
+        , singleton '\n'
+        , mconcat edges'
+        , singleton '}'
+        ]
+
+  T.writeFile fp (toLazyText (builder))
 
 -- Measure:
 --  * saturation (queue lengths)

@@ -35,6 +35,7 @@ library
     Pipeline
     QueueDeployment
     RingBufferClass
+    Sharding
     Template
     Visualise
 
@@ -42,6 +43,7 @@ library
     , array       >=0.5.4  && <0.6
     , base        >=4.17.0 && <4.18
     , bytestring  >=0.11.3 && <0.12
+    , containers  >=0.6.6  && <0.7
     , directory   >=1.3.7  && <1.4
     , filepath    >=1.4.2  && <1.5
     , process     >=1.6.16 && <1.7
