@@ -564,6 +564,8 @@ While easy to do, we'll no longer be able to implement the `Arrow` instance[^5].
 
 ## Example
 
+## Sharding
+
 ## Monitoring
 
 * https://github.com/stevana/svg-viewer-in-svg#svg-viewer-written-in-svg
@@ -573,6 +575,7 @@ While easy to do, we'll no longer be able to implement the `Arrow` instance[^5].
 ```bash
 cat data/test.txt | cabal run uppercase
 cat data/test.txt | cabal run wc
+seq 1 100 | cabal run factor
 ```
 
 XXX: update to use cabal:

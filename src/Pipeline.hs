@@ -81,8 +81,8 @@ deploy (Transform l f) e xs = do
       when (partition i (deSharding e)) $ do
         x <- tryRead xs i
         -- XXX: For debugging:
-        delay <- randomRIO (50000, 300000)
-        threadDelay delay
+        -- delay <- randomRIO (50000, 300000)
+        -- threadDelay delay
         write ys i (f x)
     commitBatch ys consumed produced
     writeCounter c produced
@@ -105,8 +105,8 @@ deploy (Fold l f s00) e xs = do
             x <- tryRead xs i
             let (s', y) = f x s
             -- XXX: For debugging:
-            delay <- randomRIO (50000, 3000000)
-            threadDelay delay
+            -- delay <- randomRIO (50000, 3000000)
+            -- threadDelay delay
             write ys i y
             return s'
           else return s
@@ -171,8 +171,8 @@ runFlow (StdInOut p) = do
         es <- fmap Input getLine `catch` (\(_e :: IOError) -> return EndOfStream)
         i <- claim xs 1
         -- XXX: For debugging:
-        delay <- randomRIO (5000, 30000)
-        threadDelay delay
+        -- delay <- randomRIO (5000, 30000)
+        -- threadDelay delay
         write xs i es
         commit xs i
         case es of
