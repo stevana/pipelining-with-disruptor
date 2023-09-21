@@ -23,16 +23,27 @@ data-files:      data/test.txt
 common warnings
   ghc-options: -Wall
 
+common debug
+  ghc-options:
+    -ddump-stg-final -ddump-to-file -ddump-simpl
+    -dsuppress-module-prefixes -dsuppress-coercions -dsuppress-uniques
+    -dsuppress-type-applications
+
+common profile
+  ghc-options: -prof -fprof-cafs -fprof-late -fno-prof-count-entries
+
 library
-  import:           warnings
+  import:           warnings, debug
   exposed-modules:
     Counter
     CRC32
     Disruptor
-    LibMain.Factor
+    LibMain.Copying
+    LibMain.Sleep
     LibMain.UpperCase
     LibMain.WordCount
     Model
+    ModelIO
     Pipeline
     QueueDeployment
     RingBufferClass
@@ -79,16 +90,39 @@ executable uppercase
   default-language: Haskell2010
   ghc-options:      -O2 -threaded -rtsopts -with-rtsopts=-N
 
-executable factor
-  import:           warnings
-  hs-source-dirs:   app/factor
+executable sleep
+  import:           warnings, profile, debug
+
+  -- profile, debug
+  hs-source-dirs:   app/sleep
   main-is:          Main.hs
   build-depends:
     , base
     , pipelining-with-disruptor
 
   default-language: Haskell2010
-  ghc-options:      -O2 -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:
+    -O2 -threaded -rtsopts
+    "-with-rtsopts=-N -qa -K1K  -p -s -hd -l-agu -A32M"
+
+-- ghc-options:      -O2 -threaded -rtsopts "-with-rtsopts=-N -qa"
+
+executable copying
+  import:           warnings, profile, debug
+  hs-source-dirs:   app/copying
+  main-is:          Main.hs
+  build-depends:
+    , base
+    , pipelining-with-disruptor
+
+  default-language: Haskell2010
+  ghc-options:
+    -O2 -threaded -rtsopts
+    "-with-rtsopts=-N -qa -p -s -hd -l-agu -A32M"
+
+-- -K1K
+
+-- ghc-options:      -O2 -threaded -rtsopts "-with-rtsopts=-N -qa"
 
 test-suite test
   import:             warnings
@@ -107,17 +141,23 @@ test-suite test
   ghc-options:        -threaded -rtsopts -with-rtsopts=-N -fno-ignore-asserts
 
 benchmark bench
-  hs-source-dirs: bench
-  main-is:        Main.hs
-  type:           exitcode-stdio-1.0
+  import:           warnings, debug, profile
+  hs-source-dirs:   bench
+  main-is:          Main.hs
+  type:             exitcode-stdio-1.0
   build-depends:
     , base
+    , deepseq
     , pipelining-with-disruptor
     , tasty-bench
 
   ghc-options:
-    -O2 -threaded -rtsopts -with-rtsopts=-N -with-rtsopts=-A32m
-    -fno-ignore-asserts
+    -O2 -threaded -rtsopts
+    "-with-rtsopts=-N -qa -K1K  -p -s -hc -l-agu -A32M"
+
+  -- -M500M
+
+  default-language: Haskell2010
 
 source-repository head
   type:     git

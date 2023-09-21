@@ -19,7 +19,6 @@ import Data.Array.MArray
        , newArray_
        , newListArray
        , readArray
-       , writeArray
        )
 import Data.Bits
 import Data.Coerce
@@ -35,10 +34,30 @@ data RingBuffer a = RingBuffer
   , rbCursor               :: IORef SequenceNumber
   , rbGatingSequences      :: IORef (IOArray Int (IORef SequenceNumber))
   , rbCachedGatingSequence :: IORef SequenceNumber
+  , rbWaitStrategy         :: WaitStrategyI
   }
 
 newtype SequenceNumber = SequenceNumber Int
   deriving newtype (Show, Eq, Ord, Num, Enum)
+
+data WaitStrategyI = WaitStrategyI
+  { notify :: IO ()
+  , wait   :: IO ()
+  }
+
+spin :: Int -> IO WaitStrategyI
+spin micros = return WaitStrategyI
+  { notify = return ()
+  , wait   = threadDelay micros
+  }
+
+mvar :: IO WaitStrategyI
+mvar = do
+  mvar <- newEmptyMVar
+  return WaitStrategyI
+    { notify = void (tryPutMVar mvar ())
+    , wait   = takeMVar mvar
+    }
 
 ------------------------------------------------------------------------
 -- * Getters and setters
@@ -51,9 +70,11 @@ elements = rbElements
 
 readCursor :: RingBuffer a -> IO SequenceNumber
 readCursor = readIORef . rbCursor
+{-# INLINE readCursor #-}
 
 writeCursor :: RingBuffer a -> SequenceNumber -> IO ()
 writeCursor rb = writeIORef (rbCursor rb)
+{-# INLINE writeCursor #-}
 
 readGatingSequences :: RingBuffer a -> IO (IOArray Int (IORef SequenceNumber))
 readGatingSequences = readIORef . rbGatingSequences
@@ -76,6 +97,7 @@ index :: Int -> SequenceNumber -> Int
 index capacity (SequenceNumber i) = i .&. indexMask
   where
     indexMask = capacity - 1
+{-# INLINE index #-}
 
 iter :: SequenceNumber -> SequenceNumber -> (SequenceNumber -> IO ()) -> IO ()
 iter lo0 hi k = go (lo0 + 1)
@@ -84,6 +106,7 @@ iter lo0 hi k = go (lo0 + 1)
            | lo <= hi = do
                k lo
                go (lo + 1)
+{-# INLINE iter #-}
 
 fold :: SequenceNumber -> SequenceNumber -> s -> (SequenceNumber -> s -> IO s) -> IO s
 fold lo0 hi s0 k = go (lo0 + 1) s0
@@ -96,11 +119,15 @@ fold lo0 hi s0 k = go (lo0 + 1) s0
 ------------------------------------------------------------------------
 -- * Create
 
-newRingBuffer :: Int -> Maybe a -> IO (RingBuffer a)
-newRingBuffer capacity mInitialValue
+data WaitStrategy = Spin Int | MVar
+
+newRingBuffer :: Int -> Maybe a -> WaitStrategy -> IO (RingBuffer a)
+newRingBuffer capacity mInitialValue waitStrategy
   | popCount capacity /= 1 = error "newRingBuffer: capacity must be a power of 2"
   | otherwise = RingBuffer capacity <$> elems <*> newIORef (-1) <*>
-                           gatingSequences <*> newIORef (-1)
+                           gatingSequences <*> newIORef (-1) <*> case waitStrategy of
+                                                                   Spin micros -> spin micros
+                                                                   MVar -> mvar
   where
     -- elems :: IOArray Int a
     elems = maybe (newArray_ bounds) (newArray bounds) mInitialValue
@@ -110,9 +137,11 @@ newRingBuffer capacity mInitialValue
 
     gatingSequences :: IO (IORef (IOArray Int (IORef SequenceNumber)))
     gatingSequences = newIORef =<< newArray_ (0, (-1))
+{-# INLINE newRingBuffer #-}
 
-newRingBuffer_ :: Int -> IO (RingBuffer a)
+newRingBuffer_ :: Int -> WaitStrategy -> IO (RingBuffer a)
 newRingBuffer_ capacity = newRingBuffer capacity Nothing
+{-# INLINE newRingBuffer_ #-}
 
 ------------------------------------------------------------------------
 -- * Producer
@@ -130,6 +159,7 @@ minGatingSequence rb = do
                      | otherwise = do
                         x <- readIORef =<< unsafeRead arr i
                         go (i + 1) len arr (min acc x)
+{-# INLINE minGatingSequence #-}
 
 -- | Currently available slots to write to.
 size :: RingBuffer a -> IO Int
@@ -143,10 +173,17 @@ size rb = do
 -- then the last consumer has not yet processed the event we are about to
 -- overwrite (due to the ring buffer wrapping around) -- the callee of
 -- @tryClaim@ should apply back-pressure upstream if this happens.
-tryClaim :: RingBuffer a -> IO (Maybe SequenceNumber)
+tryClaim :: RingBuffer a -> IO MaybeSequenceNumber
 tryClaim rb = tryClaimBatch rb 1
+{-# INLINE tryClaim #-}
 
-tryClaimBatch :: RingBuffer a -> Int -> IO (Maybe SequenceNumber)
+newtype MaybeSequenceNumber = JustSN SequenceNumber
+  deriving (Eq, Ord)
+
+nothingSN :: MaybeSequenceNumber
+nothingSN = JustSN (-666)
+
+tryClaimBatch :: RingBuffer a -> Int -> IO MaybeSequenceNumber
 tryClaimBatch rb n = assert (n > 0) $ do
   current <- readCursor rb
   let next = current + coerce n
@@ -157,18 +194,26 @@ tryClaimBatch rb n = assert (n > 0) $ do
     minSequence <- minGatingSequence rb
     writeCachedGatingSequence rb minSequence
     if (wrapPoint > minSequence)
-    then return Nothing
-    else return (Just $! next)
-  else return (Just $! next)
+    then return nothingSN
+    else return (JustSN next)
+  else return (JustSN next)
+{-# INLINE tryClaimBatch #-}
 
 writeRingBuffer :: RingBuffer a -> SequenceNumber -> a -> IO ()
-writeRingBuffer rb i x = writeArray (elements rb) (index (capacity rb) i) x
+writeRingBuffer rb i x = unsafeWrite (elements rb) (index (capacity rb) i) x
+{-# INLINE writeRingBuffer #-}
 
 publish :: RingBuffer a -> SequenceNumber -> IO ()
-publish rb i = writeCursor rb i
+publish rb i = do
+  writeCursor rb i
+  notify (rbWaitStrategy rb)
+{-# INLINE publish #-}
 
 publishBatch :: RingBuffer a -> SequenceNumber -> SequenceNumber -> IO ()
-publishBatch rb _lo hi = writeCursor rb hi
+publishBatch rb _lo hi = do
+  writeCursor rb hi
+  notify (rbWaitStrategy rb)
+{-# INLINE publishBatch #-}
 
 ------------------------------------------------------------------------
 -- * Consumer
@@ -182,32 +227,32 @@ addGatingSequence rb = do
   gatingSequences' <- newListArray (lo, hi + 1) (elems ++ [newGatingSequence])
   writeGatingSequences rb gatingSequences'
   return newGatingSequence
+{-# INLINE addGatingSequence #-}
 
 waitFor :: RingBuffer a -> SequenceNumber -> IO SequenceNumber
 waitFor rb consumed = go
   where
+    go :: IO SequenceNumber
     go = do
       produced <- readCursor rb
       if consumed < produced
       then return produced
       else do
-        threadDelay 100 -- NOTE: removing the sleep seems to cause
-                      -- non-termination...
-        go -- SPIN
-        -- ^ XXX: Other wait strategies could be implemented here, e.g. we could
-        -- try to recurse immediately here, and if there's no work after a
-        -- couple of tries go into a takeMTVar sleep waiting for a producer to
-        -- wake us up.
+        wait (rbWaitStrategy rb)
+        go
+{-# INLINE waitFor #-}
 
 readRingBuffer :: RingBuffer a -> SequenceNumber -> IO a
-readRingBuffer rb want = do
-  produced <- readCursor rb
-  if want <= produced
-  then readArray (elements rb) (index (capacity rb) want)
-  else do
-    threadDelay 100
-    -- XXX: non-blocking interface?
-    readRingBuffer rb want
+readRingBuffer rb want = go
+  where
+    go = do
+      produced <- readCursor rb
+      if want <= produced
+      then unsafeRead (elements rb) (index (capacity rb) want)
+      else do
+        wait (rbWaitStrategy rb)
+        go
+{-# INLINE readRingBuffer #-}
 
 ------------------------------------------------------------------------
 -- * Debugging

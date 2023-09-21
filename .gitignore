@@ -1,2 +1,9 @@
 dist-newstyle/
 cabal.project.local*
+*.eventlog
+*.eventlog.html
+*.hp
+*.prof
+*.aux
+*.ps
+*.svg

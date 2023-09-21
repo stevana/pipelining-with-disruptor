@@ -1,5 +1,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StrictData #-}
 
 module Visualise where
 
@@ -9,7 +10,7 @@ import Data.Coerce
 import qualified Data.Map as Map
 import Data.IORef
 import Data.Function (on)
-import Data.List (intersperse, sort, groupBy, sortBy)
+import Data.List (sort, groupBy, sortBy)
 import qualified Data.Text.Lazy.IO as T
 import System.Directory
 import System.FilePath (takeExtension, (</>))

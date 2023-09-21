@@ -129,6 +129,7 @@ Many streaming libraries are not:
   1. doing parallel processing (or if so, they don't do it deterministically or
      without copying data)
   2. cannot span multiple computers
+  3. no observability
 
 Don't have a good deploy, upgrade, rescale story.
 
@@ -155,11 +156,15 @@ Don't have a good deploy, upgrade, rescale story.
 
 * https://elixir-lang.org/blog/2016/07/14/announcing-genstage/
 * https://hexdocs.pm/gen_stage/1.0.0/GenStage.html
+  - Gives up on ordering, https://youtu.be/XPlXNUXmcgE?t=788
+* ALF: https://www.youtube.com/watch?v=2XrYd1W5GLo
+* https://github.com/dashbitco/broadway
 
 ### Dataflow
 
 * Lustre / SCADA / Esterel
 * https://en.wikipedia.org/wiki/Dataflow_programming
+* https://github.com/samuell/awesome-fbp
 
 ### (Functional) reactive programming
 
@@ -564,13 +569,67 @@ While easy to do, we'll no longer be able to implement the `Arrow` instance[^5].
 
 ## Example
 
+```haskell
+modelSleep :: P () ()
+modelSleep = Shard (MapM (const (threadDelay 250000)) :&&&
+                    MapM (const (threadDelay 250000)) :>>>
+                    MapM (const (threadDelay 250000)) :>>>
+                    MapM (const (threadDelay 250000)))
+
+runModelSleep :: IO ()
+runModelSleep = void (model modelSleep (replicate 5 ()))
+```
+
+```
+> :set +s
+> runModelSleep
+(5.02 secs, 905,480 bytes)
+```
+
+```haskell
+tBQueueSleep :: P () ()
+tBQueueSleep = MapM (const (threadDelay 250000)) :&&&
+               MapM (const (threadDelay 250000)) :>>>
+               MapM (const (threadDelay 250000)) :>>>
+               MapM (const (threadDelay 250000))
+
+tBQueueSleepSharded :: P () ()
+tBQueueSleepSharded = Shard tBQueueSleep
+```
+
+```
+> runTBQueueSleep
+(1.76 secs, 907,160 bytes)
+> runTBQueueSleepSharded
+(1.26 secs, 920,888 bytes)
+```
+
+```haskell
+tBQueueSleepSeq :: P () ()
+tBQueueSleepSeq =
+  MapM $ \() -> do
+    ()       <- threadDelay 250000
+    ((), ()) <- (,) <$> threadDelay 250000 <*> threadDelay 250000
+    ()       <- threadDelay 250000
+    return ()
+```
+
+```
+> runTBQueueSleepSeq
+(5.02 secs, 898,096 bytes)
+```
+
 ## Sharding
 
-## Monitoring
+## Observability
 
 * https://github.com/stevana/svg-viewer-in-svg#svg-viewer-written-in-svg
 
 ## Running
+
+The easiest way to install the right version of GHC and cabal is probably via
+[ghcup](https://www.haskell.org/ghcup/). Once installed the examples can be run
+as follows.
 
 ```bash
 cat data/test.txt | cabal run uppercase
@@ -592,7 +651,7 @@ firefox hs-wc.svg
 
 * Avoid writing NoOutput
 * Actual Arrow instance
-* Can we be smarter about Either?
+* Can we be avoid copying when using Either?
 * More monitoring?
 * Deploy across network of computers
 * Hot-code upgrades of workers/stages with zero downtim
@@ -617,6 +676,10 @@ firefox hs-wc.svg
 
 * [*SEDA: An Architecture for Well-Conditioned Scalable Internet
   Services*](https://people.eecs.berkeley.edu/~brewer/papers/SEDA-sosp.pdf)
+
+* Apache Beam -- windowing
+
+* Microsoft Naiad -- stage notifications
 
 
 [^1]: Even better would be if arrow notation worked for Cartesian categories.

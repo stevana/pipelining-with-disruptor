@@ -7,9 +7,12 @@ import Pipeline
 ------------------------------------------------------------------------
 
 lineCount, wordCount, charCount :: P (Input String) (Output String)
-lineCount = fold "lineCount" 0 (Output . show) (\_str n -> (n + 1,                  NoOutput))
-wordCount = fold "wordCount" 0 (Output . show) (\str  n -> (n + length (words str), NoOutput))
-charCount = fold "charCount" 0 (Output . show) (\str  n -> (n + length str + 1,     NoOutput))
+lineCount = fold "lineCount" zero (Output . show) (\_str n -> (n + 1,                  NoOutput))
+wordCount = fold "wordCount" zero (Output . show) (\str  n -> (n + length (words str), NoOutput))
+charCount = fold "charCount" zero (Output . show) (\str  n -> (n + length str + 1,     NoOutput))
+
+zero :: Int
+zero = 0
 
 wc :: P (Input String) (Output String)
 wc = (lineCount :&&& wordCount :&&& charCount) :>>> Transform "combine" combine

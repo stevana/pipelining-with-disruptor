@@ -2,23 +2,45 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 
 module Pipeline (module Pipeline, Input(..), Output(..), module Sharding) where
 
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
+import Data.Coerce
+import Data.Maybe
 import Data.IORef
+import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Time
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
-import System.Random
 
 import Counter
+import Disruptor (SequenceNumber, WaitStrategy(..))
 import qualified Disruptor
 import RingBufferClass
-import Visualise
 import Sharding
+import Visualise
+
+------------------------------------------------------------------------
+
+rB_SIZE :: Int
+rB_SIZE = 2^(16 :: Int)
+
+rB_BATCH_SIZE :: Int
+rB_BATCH_SIZE = 128
+
+rB_WAIT_STRATEGY :: WaitStrategy
+rB_WAIT_STRATEGY = Spin 1
+
+rB_BACK_PRESSURE :: IO ()
+rB_BACK_PRESSURE = threadDelay 1
+
+dATE_FORMAT :: String
+dATE_FORMAT = "%F_%T%Q" -- YYYY-MM-DD_HH:MM:SS.PICOS
 
 ------------------------------------------------------------------------
 
@@ -40,19 +62,30 @@ data P a b where
   (:|||) :: (HasRB a, HasRB b) => P a c -> P b c -> P (Either a b) c
 
   Transform :: Label -> (a -> b) -> P a b
+  TransformM :: Label -> (a -> IO b) -> P a b
   Fold :: Label -> (a -> s -> (s, b)) -> s -> P a b
 
   Shard :: (HasRB b, Show b) => P a b -> P a (Sharded b)
   Fork  :: P a b -> P a (b, b)
   -- Distr   :: P (Either a b, c) (Either (a, c) (b, c))
 
-rB_SIZE :: Int
-rB_SIZE = 8
+  -- Decompose :: (a -> [b]) -> P a b
+  -- Recompose :: (a -> [a] -> Maybe b) -> P a b
+  -- Tee       :: P a b -> P a a
+  -- DeadEnd   :: P a ()
 
 data DeployEnv = DeployEnv
-  { deGraph    :: Graph
-  , deSharding :: Sharding
+  { deGraph     :: Graph
+  , deSharding  :: Sharding
+  , deThreadIds :: IORef [ThreadId]
+  , deCPUMap    :: Map Label Int
   }
+
+saveThreadId :: DeployEnv -> ThreadId -> IO ()
+saveThreadId de tid = modifyIORef' (deThreadIds de) (tid :)
+
+loadThreadIds :: DeployEnv -> IO [ThreadId]
+loadThreadIds = readIORef . deThreadIds
 
 deploy :: (HasRB a, HasRB b, Show a, Show b) => P a b -> DeployEnv -> RB a -> IO (RB b)
 deploy Identity   _e xs = return xs
@@ -65,17 +98,20 @@ deploy (p :&&& q) e xs = do
   ys <- deploy p e xs
   zs <- deploy q e xs
   return (RBPair (label ys ++ label zs) ys zs)
-deploy (Transform l f) e xs = do
-  ys <- new (l <> "_RB") rB_SIZE
-  let g = deGraph e
-      s = deSharding e
-  addRingBufferNode g (l <> "_RB") s ys
-  addConsumers g (label xs) l
+deploy (Transform l f) e xs = deploy (TransformM l (return . f)) e xs
+deploy (TransformM l f) e xs = do
+  ys <- new (l <> "_RB") rB_SIZE rB_WAIT_STRATEGY
+  addRingBufferNode (deGraph e) (l <> "_RB") (deSharding e) ys
+  addConsumers (deGraph e) (label xs) l
   c <- addConsumer xs
-  addWorkerNode g l c
-  addProducers g l (label ys)
-  _pid <- forkIO $ forever $ do
+  addWorkerNode (deGraph e) l c
+  addProducers (deGraph e) l (label ys)
+  let fork = case Map.lookup l (deCPUMap e) of
+               Nothing -> forkIO
+               Just n  -> forkOn n
+  pid <- fork $ forever $ do
     consumed <- readCounter c
+    -- putStrLn (unLabel l ++ ", waitFor: " ++ show consumed)
     produced <- waitFor xs consumed
     Disruptor.iter consumed produced $ \i ->
       when (partition i (deSharding e)) $ do
@@ -83,15 +119,26 @@ deploy (Transform l f) e xs = do
         -- XXX: For debugging:
         -- delay <- randomRIO (50000, 300000)
         -- threadDelay delay
-        write ys i (f x)
-    commitBatch ys consumed produced
+        -- putStrLn (unLabel l ++ ", i: " ++ show i)
+        -- start <- getCurrentTime
+        y <- f x
+        -- end <- getCurrentTime
+        -- putStrLn (unLabel l ++ ": executing task: " ++ show i ++ " ... finished in: " ++ show (diffUTCTime end start))
+        write ys i y
+        commit ys i
+
+    -- NOTE: Committing the whole batch at once, slow things down for the
+    -- downstream (at least on small workloads).
+    -- commitBatch ys consumed produced
     writeCounter c produced
+  -- (capa, _pinned) <- threadCapability pid
+  -- putStrLn (unLabel l ++ " is running on capability: " ++ show capa)
+  saveThreadId e pid
   return ys
 deploy (Fold l f s00) e xs = do
-  ys <- new (l <> "_RB") rB_SIZE
-  let g = deGraph e
-      s = deSharding e
-  addRingBufferNode g (l <> "_RB") s ys
+  ys <- new (l <> "_RB") rB_SIZE rB_WAIT_STRATEGY
+  let g  = deGraph e
+  addRingBufferNode g (l <> "_RB") (deSharding e) ys
   addConsumers g (label xs) l
   addProducers g l (label ys)
   c <- addConsumer xs
@@ -113,16 +160,19 @@ deploy (Fold l f s00) e xs = do
         commitBatch ys consumed produced
         writeCounter c produced
         go s'
-  _pid <- forkIO (go s00)
+  pid <- forkIO (go s00)
+  saveThreadId e pid
   return ys
 deploy (_ :+++ _) _e _ = undefined
 deploy (_ :||| _) _e _ = undefined
 deploy (Fork _)   _e _ = undefined
 deploy (Shard p) e xs  = do
+  let p' = appendPrimeToLabels p
   let (s1, s2) = addShard (deSharding e)
-  ys1 <- deploy p (e { deSharding = s1 }) xs
-  ys2 <- deploy p (e { deSharding = s2 }) xs
+  ys1 <- deploy p' (e { deSharding = s1 }) xs
+  ys2 <- deploy p' (e { deSharding = s2 }) xs
   return (RBShard (label ys1 ++ label ys2) s1 s2 ys1 ys2)
+{-# INLINE deploy #-}
 
   {-
 deploy (p :+++ q) (RBEither xs ys) = do
@@ -135,174 +185,207 @@ deploy (p :||| q) (RBEither xs ys) = do
   deploy (Transform (either id id)) (RBEither zs zs')
 -}
 
+appendPrimeToLabels :: P a b -> P a b
+appendPrimeToLabels = id -- XXX
+{-# INLINE appendPrimeToLabels #-}
+
 data Flow
   = StdInOut (P (Input String) (Output String))
   | StdInOutSharded (P (Input String) (Sharded (Output String)))
-  | forall a b. Show b => List [a] (P (Input a) (Output b))
 
-runFlow :: Flow -> IO ()
-runFlow (StdInOut p) = do
+data SourceSetup a = SourceSetup (RB (Input a)) Graph ThreadId (IORef SequenceNumber)
 
-  xs <- new "source_RB" rB_SIZE
+setupSource :: (HasRB a, Show a) => Label -> (RB (Input a) -> IORef SequenceNumber -> IO ())
+            -> IO (SourceSetup a)
+setupSource l src = do
+  xs <- new "source_RB" rB_SIZE rB_WAIT_STRATEGY
   g  <- newGraph
-  addSourceOrSinkNode g "stdin"
+  addSourceOrSinkNode g l
   addProducerNode g "source"
-  addProducers g "stdin" ["source"]
+  addProducers g l ["source"]
   addProducers g "source" ["source_RB"]
   addRingBufferNode g "source_RB" noSharding xs
-  ys <- deploy p (DeployEnv g noSharding) xs
   stop <- newIORef (-1)
+  pid <- forkIO (src xs stop)
+  return (SourceSetup xs g pid stop)
+{-# INLINE setupSource #-}
 
+data MetricsSetup = MetricsSetup FilePath (Maybe ThreadId)
+
+-- https://news.ycombinator.com/item?id=37532439
+setupMetrics :: EnableMetrics -> Graph -> IORef SequenceNumber -> IO MetricsSetup
+setupMetrics True g stop = do
   t0 <- getCurrentTime
-  let dateFormat = "%F_%T%Q" -- YYYY-MM-DD_HH:MM:SS.PICOS
-  let dir = "/tmp/wc-metrics-" ++ formatTime defaultTimeLocale dateFormat t0
+  let dir = "/tmp/wc-metrics-" ++ formatTime defaultTimeLocale dATE_FORMAT t0
   createDirectoryIfMissing True dir
   let metrics = do
         t <- getCurrentTime
-        drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dateFormat t ++ ".dot")
+        drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dATE_FORMAT t ++ ".dot")
         threadDelay 1000 -- 0.001s
         stopping <- readIORef stop
         if stopping == (-1)
         then metrics
         else return ()
-  pidMetrics <- forkIO metrics
+  pid <- forkOn 0 metrics
+  return (MetricsSetup dir (Just pid))
+setupMetrics False _g _stop =
+  return (MetricsSetup "/nonexistent" Nothing)
 
-  let source = do
-        es <- fmap Input getLine `catch` (\(_e :: IOError) -> return EndOfStream)
-        i <- claim xs 1
-        -- XXX: For debugging:
-        -- delay <- randomRIO (5000, 30000)
-        -- threadDelay delay
-        write xs i es
-        commit xs i
-        case es of
-          EndOfStream -> atomicWriteIORef stop i
-          Input _     -> source
-  pidSource <- forkIO source
+newtype SinkSetup = SinkSetup (IO ())
 
+setupSink :: HasRB a => Label -> RB a -> Graph -> IORef SequenceNumber -> (a -> IO ()) -> IO SinkSetup
+setupSink l ys g stop io = do
   c <- addConsumer ys
   addWorkerNode g "sink" c
   addConsumers g (label ys) "sink"
-  addSourceOrSinkNode g "stdout"
-  addProducers g "sink" ["stdout"]
+  addSourceOrSinkNode g l
+  addProducers g "sink" [l]
   let sink = do
         stopping <- readIORef stop
         consumed <- readCounter c
+        -- XXX: remove
+        -- when (stopping /= (-1)) $
+          -- putStrLn ("stopping: " ++ show stopping ++ ", consumed: " ++ show consumed)
         produced <- readCursor ys
         -- NOTE: `waitFor` is inlined here, so that we can stop.
-        if stopping /= -1 && consumed == stopping
+        if stopping /= -1 && consumed >= stopping
         then return ()
         else do
           Disruptor.iter consumed produced $ \i -> do
             ms <- tryRead ys i
-            case ms of
-              NoOutput -> return ()
-              Output s -> putStrLn s
+            io ms
           -- XXX: is it worth avoiding this write when produced == consumed?
           writeCounter c produced
           threadDelay 1 -- NOTE: Without this sleep we get into an infinite
                         -- loop... Not sure why.
           sink
-  sink `finally` do
-    mapM_ killThread [pidSource, pidMetrics]
-    t <- getCurrentTime
-    drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dateFormat t ++ ".dot")
-    runDot dir
-    runFeh dir
--- XXX: This is copy pasted from above... abstract out the common part.
-runFlow (StdInOutSharded p) = do
-  xs <- new "source_RB" rB_SIZE
-  g  <- newGraph
-  addSourceOrSinkNode g "stdin"
-  addProducerNode g "source"
-  addProducers g "stdin" ["source"]
-  addProducers g "source" ["source_RB"]
-  addRingBufferNode g "source_RB" noSharding xs
-  ys <- deploy p (DeployEnv g noSharding) xs
-  stop <- newIORef (-1)
+  return (SinkSetup sink)
+{-# INLINE setupSink #-}
 
-  t0 <- getCurrentTime
-  let dateFormat = "%F_%T%Q" -- YYYY-MM-DD_HH:MM:SS.PICOS
-  let dir = "/tmp/wc-metrics-" ++ formatTime defaultTimeLocale dateFormat t0
-  createDirectoryIfMissing True dir
-  putStrLn $ "metrics saved in: " ++ dir
-  let metrics = forever $ do
-        t <- getCurrentTime
-        drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dateFormat t ++ ".dot")
-        threadDelay 1000 -- 0.001s
-  pidMetrics <- forkIO metrics
+type EnableMetrics = Bool
 
-  let source = do
-        es <- fmap Input getLine `catch` (\(_e :: IOError) -> return EndOfStream)
-        i <- claim xs 1
+flowBracket :: (HasRB a, HasRB b, Show a, Show b)
+            => P (Input a) b -> Label
+            -> (RB (Input a) -> IORef SequenceNumber -> IO ())
+            -> Label -> (b -> IO ()) -> EnableMetrics -> IO ()
+flowBracket p srcLabel src snkLabel sink enableMetrics = do
+  SourceSetup xs g sourcePid stop <- setupSource srcLabel src
+  threadIds <- newIORef []
+  -- XXX: don't hardcode topology...
+  let deployEnv = DeployEnv g noSharding threadIds (Map.fromList [("sleep1", 2), ("sleep2", 3), ("sleep3", 4), ("sleep4", 5)])
+  ys <- deploy p deployEnv xs
+  MetricsSetup dir metricsPid <- setupMetrics enableMetrics g stop
+  SinkSetup runSink <- setupSink snkLabel ys g stop sink
+
+  runSink `finally` do
+    workerPids <- loadThreadIds deployEnv
+    mapM_ killThread (sourcePid : maybeToList metricsPid ++ workerPids)
+    when enableMetrics $ do
+      t <- getCurrentTime
+      drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dATE_FORMAT t ++ ".dot")
+      runDot dir
+      runFeh dir
+{-# INLINE flowBracket #-}
+
+listSource :: [a] -> IO (IO (Input a))
+listSource xs0 = do
+  input <- newIORef xs0
+  let src = do
+        xs <- readIORef input
+        case xs of
+          []      -> return EndOfStream
+          x : xs' -> do
+            writeIORef input xs'
+            return (Input x)
+  return src
+
+runPList :: (HasRB a, Show a, Show b) => P (Input a) (Output b) -> EnableMetrics -> [a] -> IO ()
+runPList p enableMetrics xs = do
+  src <- listSource xs
+
+  -- output <- newIORef []
+  let snk ms = case ms of
+                 NoOutput -> return ()
+                 Output _y -> return () -- modifyIORef output (y :)
+  flowBracket p "list" (batching rB_BATCH_SIZE src) "stdout" snk enableMetrics
+  -- readIORef output
+{-# INLINE runPList #-}
+
+runPListSharded :: (HasRB a, Show a, Show b) => P (Input a) (Sharded (Output b)) -> EnableMetrics -> [a] -> IO ()
+runPListSharded p enableMetrics xs = do
+  src <- listSource xs
+
+  -- output <- newIORef []
+  let snk (Sharded ms) = case ms of
+                           NoOutput -> return ()
+                           Output _y -> return () -- modifyIORef' output (y :)
+  flowBracket p "list" (batching rB_BATCH_SIZE src) "stdout" snk enableMetrics
+  -- readIORef output
+{-# INLINE runPListSharded #-}
+
+
+nonBatching :: IO (Input a) -> RB (Input a) -> IORef SequenceNumber -> IO ()
+nonBatching io xs stop = go
+  where
+    go = do
+      mi <- tryClaim xs
+      if mi == Disruptor.nothingSN
+      then do
+        rB_BACK_PRESSURE
+        go
+      else do
+        es <- io
         -- XXX: For debugging:
-        delay <- randomRIO (5000, 30000)
-        threadDelay delay
-        write xs i es
-        commit xs i
+        -- delay <- randomRIO (5000, 30000)
+        -- threadDelay delay
+        write xs (coerce mi) es
+        commit xs (coerce mi)
         case es of
-          EndOfStream -> atomicWriteIORef stop i
-          Input _     -> source
-  pidSource <- forkIO source
+          EndOfStream -> writeIORef stop (coerce mi)
+          Input _     -> go
 
-  c <- addConsumer ys
-  addWorkerNode g "sink" c
-  addConsumers g (label ys) "sink"
-  addSourceOrSinkNode g "stdout"
-  addProducers g "sink" ["stdout"]
-  let sink = do
-        stopping <- readIORef stop
-        consumed <- readCounter c
-        produced <- readCursor ys
-        -- NOTE: `waitFor` is inlined here, so that we can stop.
-        if stopping /= -1 && consumed == stopping
-        then return ()
-        else do
-          Disruptor.iter consumed produced $ \i -> do
-            Sharded ms <- tryRead ys i
-            case ms of
-              NoOutput -> return ()
-              Output s -> putStrLn s
-          -- XXX: is it worth avoiding this write when produced == consumed?
-          writeCounter c produced
-          threadDelay 1 -- NOTE: Without this sleep we get into an infinite
-                        -- loop... Not sure why.
-          sink
-  sink `finally` do
-    -- mapM_ killThread [pidSource, pidMetrics]
-    t <- getCurrentTime
-    drawGraph g (dir </> "wc-" ++ formatTime defaultTimeLocale dateFormat t ++ ".dot")
-    runDot dir
-    runFeh dir
-runFlow (List _xs0 _p) = undefined
-  {- do
---   -- XXX: Max size of RB?
---   let n = length xs0
---   -- XXX: round up to nearest power of two?
---   xs <- new "List source" n
---   g  <- newGraph
---   pidSource <- forkIO $ do
---     n' <- claimBatch xs n 100
---     assertIO (n == coerce n')
---     mapM_ (\(i, x) -> write xs i (Input x)) (zip [0..n'] xs0)
---     commitBatch xs 0 n'
---
---   ys <- deploy p g xs
---   c <- addConsumer ys
---   let sink = do
---         consumed <- readCounter c
---         if consumed == coerce n then return ()
---         else do
---           produced <- waitFor ys consumed
---           Disruptor.iter consumed produced $ \i -> do
---             my <- tryRead ys i
---             case my of
---               NoOutput -> return ()
---               Output y -> print y
---             writeCounter c produced
---             sink
---   sink `finally` killThread pidSource
--}
+batching :: Int -> IO (Input a) -> RB (Input a) -> IORef SequenceNumber -> IO ()
+batching n io xs stop = go
+  where
+    go = do
+      mhi <- tryClaimBatch xs n
+      if mhi == Disruptor.nothingSN
+      then do
+        rB_BACK_PRESSURE
+        go
+      else do
+        -- XXX: use a pre-allocated array...
+        es <- replicateM n io
+        -- XXX: For debugging:
+        -- delay <- randomRIO (5000, 30000)
+        -- threadDelay delay
+        let hi = coerce mhi
+            lo = hi - coerce n
+        -- putStrLn $ "batching, lo: " ++ show lo ++ ", hi: " ++ show hi
+        Disruptor.iter lo hi $ \i -> do
+          write xs i (es !! coerce (i - lo - 1))
+        commit xs hi
+        go' lo es
+
+    go' _i []                  = go
+    go' i  (Input _ : es)      = go' (i + 1) es
+    go' i  (EndOfStream : _es) = writeIORef stop i
+
+
+runFlow :: Flow -> IO ()
+runFlow (StdInOut p) = do
+  let src    = fmap Input getLine `catch` (\(_e :: IOError) -> return EndOfStream)
+      snk ms = case ms of
+                  NoOutput -> return ()
+                  Output s -> putStrLn s
+  flowBracket p "stdin" (nonBatching src) "stdout" snk True
+runFlow (StdInOutSharded p) = do
+  let src = fmap Input getLine `catch` (\(_e :: IOError) -> return EndOfStream)
+      snk (Sharded ms) = case ms of
+                           NoOutput -> return ()
+                           Output s -> putStrLn s
+
+  flowBracket p "stdin" (nonBatching src) "stdout" snk True
 
 transform :: Label -> Output b -> (a -> Output b) -> P (Input a) (Output b)
 transform l y f = Transform l (\i -> case i of
@@ -319,3 +402,10 @@ fold l s0 e f = Fold l (\i s -> case i of
 
 assertIO :: Bool -> IO ()
 assertIO !b = assert b (return ())
+
+timeIt :: IO () -> IO ()
+timeIt io = do
+  start <- getCurrentTime
+  io
+  end <- getCurrentTime
+  print (diffUTCTime end start)

@@ -15,13 +15,14 @@ import Data.Kind (Type)
 import Data.String
 
 import Counter
-import Disruptor (RingBuffer, SequenceNumber)
+import Disruptor
+       (MaybeSequenceNumber, RingBuffer, SequenceNumber, WaitStrategy)
 import qualified Disruptor
 import Sharding
 
 ------------------------------------------------------------------------
 
-newtype Label = Label String
+newtype Label = Label { unLabel :: String }
   deriving (Eq, Ord, Show, IsString, Semigroup, Monoid)
 
 data Input  a = Input  a | EndOfStream
@@ -49,11 +50,11 @@ escape (c   : cs) = c : escape cs
 
 class HasRB a where
   data RB a :: Type
-  new           :: Label -> Int -> IO (RB a)
+  new           :: Label -> Int -> WaitStrategy -> IO (RB a)
   cursor        :: RB a -> Counter
   label         :: RB a -> [Label]
-  tryClaim      :: RB a -> IO (Maybe SequenceNumber)
-  tryClaimBatch :: RB a -> Int -> IO (Maybe SequenceNumber)
+  tryClaim      :: RB a -> IO MaybeSequenceNumber
+  tryClaimBatch :: RB a -> Int -> IO MaybeSequenceNumber
   write         :: RB a -> SequenceNumber -> a -> IO ()
   commit        :: RB a -> SequenceNumber -> IO ()
   commitBatch   :: RB a -> SequenceNumber -> SequenceNumber -> IO ()
@@ -63,20 +64,6 @@ class HasRB a where
   addConsumer   :: RB a -> IO Counter
   toList        :: RB a -> IO [a]
   toListSharded :: RB a -> Sharding -> IO [a]
-
-claim :: HasRB a => RB a -> Int -> IO SequenceNumber
-claim rb millis = do
-  mi <- tryClaim rb
-  case mi of
-    Nothing -> threadDelay millis >> claim rb millis
-    Just i  -> return i
-
-claimBatch :: HasRB a => RB a -> Int -> Int -> IO SequenceNumber
-claimBatch rb n millis = do
-  mi <- tryClaimBatch rb n
-  case mi of
-    Nothing -> threadDelay millis >> claimBatch rb n millis
-    Just i  -> return i
 
 instance HasRB a => HasRB (Sharded a) where
   data RB (Sharded a) = RBShard [Label] Sharding Sharding (RB a) (RB a)
@@ -121,10 +108,23 @@ instance HasRB a => HasRB (Sharded a) where
       interleave [] ys = map Sharded ys
       interleave xs [] = map Sharded xs
       interleave (x : xs) (y : ys) = Sharded x : Sharded y : interleave xs ys
+  {-# INLINE new #-}
+  {-# INLINE cursor #-}
+  {-# INLINE label #-}
+  {-# INLINE tryClaim #-}
+  {-# INLINE tryClaimBatch #-}
+  {-# INLINE addConsumer #-}
+  {-# INLINE waitFor #-}
+  {-# INLINE tryRead #-}
+  {-# INLINE write #-}
+  {-# INLINE commit #-}
+  {-# INLINE commitBatch #-}
+  {-# INLINE readCursor #-}
+  {-# INLINE toList #-}
 
 instance (HasRB a, HasRB b) => HasRB (a, b) where
   data RB (a, b) = RBPair [Label] (RB a) (RB b)
-  new l n = RBPair [l] <$> new l n <*> new l n
+  new l n ws = RBPair [l] <$> new l n ws <*> new l n ws
   cursor (RBPair _l xs ys) = cursor xs `combineCounters` cursor ys
   label (RBPair  l _xs _ys) = l
   tryClaim (RBPair _l xs ys) = do
@@ -142,6 +142,10 @@ instance (HasRB a, HasRB b) => HasRB (a, b) where
   waitFor (RBPair _l xs ys) i = do
     hi <- waitFor xs i
     hj <- waitFor ys i
+    -- XXX: test this assertion?
+    -- assertIO $ do
+    --   hj <- waitFor ys i
+    --   return (hi == hj)
     return (min hi hj)
   tryRead (RBPair _l xs ys) i = do
     x <- tryRead xs i
@@ -168,10 +172,23 @@ instance (HasRB a, HasRB b) => HasRB (a, b) where
     xs' <- toListSharded xs s
     ys' <- toListSharded ys s
     return (zip xs' ys')
+  {-# INLINE new #-}
+  {-# INLINE cursor #-}
+  {-# INLINE label #-}
+  {-# INLINE tryClaim #-}
+  {-# INLINE tryClaimBatch #-}
+  {-# INLINE addConsumer #-}
+  {-# INLINE waitFor #-}
+  {-# INLINE tryRead #-}
+  {-# INLINE write #-}
+  {-# INLINE commit #-}
+  {-# INLINE commitBatch #-}
+  {-# INLINE readCursor #-}
+  {-# INLINE toList #-}
 
 instance HasRB (Input a) where
   data RB (Input a)             = RBInput [Label] (RingBuffer (Input a))
-  new l n                       = RBInput [l] <$> Disruptor.newRingBuffer_ n
+  new l n ws                    = RBInput [l] <$> Disruptor.newRingBuffer_ n ws
   cursor        (RBInput _l rb) = makeCounter (Disruptor.rbCursor rb)
   label         (RBInput l _rb) = l
   tryClaim      (RBInput _l rb) = Disruptor.tryClaim rb
@@ -185,10 +202,23 @@ instance HasRB (Input a) where
   addConsumer   (RBInput _l rb) = makeCounter <$> Disruptor.addGatingSequence rb
   toList        (RBInput _l rb) = Disruptor.toList rb
   toListSharded (RBInput _l rb) = toListSharded_ rb
+  {-# INLINE new #-}
+  {-# INLINE cursor #-}
+  {-# INLINE label #-}
+  {-# INLINE tryClaim #-}
+  {-# INLINE tryClaimBatch #-}
+  {-# INLINE addConsumer #-}
+  {-# INLINE waitFor #-}
+  {-# INLINE tryRead #-}
+  {-# INLINE write #-}
+  {-# INLINE commit #-}
+  {-# INLINE commitBatch #-}
+  {-# INLINE readCursor #-}
+  {-# INLINE toList #-}
 
 instance HasRB (Output a) where
   data RB (Output a)          = RBOutput [Label] (RingBuffer (Output a))
-  new l n                     = RBOutput [l] <$> Disruptor.newRingBuffer_ n
+  new l n ws                  = RBOutput [l] <$> Disruptor.newRingBuffer_ n ws
   cursor        (RBOutput _l rb) = makeCounter (Disruptor.rbCursor rb)
   label         (RBOutput  l _rb) = l
   tryClaim      (RBOutput _l rb) = Disruptor.tryClaim rb
@@ -202,10 +232,23 @@ instance HasRB (Output a) where
   addConsumer   (RBOutput _l rb) = makeCounter <$> Disruptor.addGatingSequence rb
   toList        (RBOutput _l rb) = Disruptor.toList rb
   toListSharded (RBOutput _l rb) = toListSharded_ rb
+  {-# INLINE new #-}
+  {-# INLINE cursor #-}
+  {-# INLINE label #-}
+  {-# INLINE tryClaim #-}
+  {-# INLINE tryClaimBatch #-}
+  {-# INLINE addConsumer #-}
+  {-# INLINE waitFor #-}
+  {-# INLINE tryRead #-}
+  {-# INLINE write #-}
+  {-# INLINE commit #-}
+  {-# INLINE commitBatch #-}
+  {-# INLINE readCursor #-}
+  {-# INLINE toList #-}
 
 instance HasRB String where
   data RB String           = RB [Label] (RingBuffer String)
-  new l n                  = RB [l] <$> Disruptor.newRingBuffer_ n
+  new l n ws               = RB [l] <$> Disruptor.newRingBuffer_ n ws
   cursor        (RB _l rb) = makeCounter (Disruptor.rbCursor rb)
   label         (RB  l _rb) = l
   tryClaim      (RB _l rb) = Disruptor.tryClaim rb
@@ -220,9 +263,70 @@ instance HasRB String where
   toList        (RB _l rb) = Disruptor.toList rb
   toListSharded (RB _l rb) = toListSharded_ rb
 
+instance HasRB Int where
+  data RB Int              = RBInt [Label] (RingBuffer Int)
+  new l n ws               = RBInt [l] <$> Disruptor.newRingBuffer_ n ws
+  cursor        (RBInt _l  rb) = makeCounter (Disruptor.rbCursor rb)
+  label         (RBInt  l _rb) = l
+  tryClaim      (RBInt _l  rb) = Disruptor.tryClaim rb
+  tryClaimBatch (RBInt _l  rb) = Disruptor.tryClaimBatch rb
+  write         (RBInt _l  rb) = Disruptor.writeRingBuffer rb
+  commit        (RBInt _l  rb) = Disruptor.publish rb
+  commitBatch   (RBInt _l  rb) = Disruptor.publishBatch rb
+  waitFor       (RBInt _l  rb) = Disruptor.waitFor rb
+  readCursor    (RBInt _l  rb) = Disruptor.readCursor rb
+  tryRead       (RBInt _l  rb) = Disruptor.readRingBuffer rb
+  addConsumer   (RBInt _l  rb) = makeCounter <$> Disruptor.addGatingSequence rb
+  toList        (RBInt _l  rb) = Disruptor.toList rb
+  toListSharded (RBInt _l  rb) = toListSharded_ rb
+  {-# INLINE new #-}
+  {-# INLINE cursor #-}
+  {-# INLINE label #-}
+  {-# INLINE tryClaim #-}
+  {-# INLINE tryClaimBatch #-}
+  {-# INLINE addConsumer #-}
+  {-# INLINE waitFor #-}
+  {-# INLINE tryRead #-}
+  {-# INLINE write #-}
+  {-# INLINE commit #-}
+  {-# INLINE commitBatch #-}
+  {-# INLINE readCursor #-}
+  {-# INLINE toList #-}
+
+-- XXX: Use unboxed array?
+instance HasRB () where
+  data RB ()               = RBUnit [Label] (RingBuffer ())
+  new l n ws               = RBUnit [l] <$> Disruptor.newRingBuffer_ n ws
+  cursor        (RBUnit _l  rb) = makeCounter (Disruptor.rbCursor rb)
+  label         (RBUnit  l _rb) = l
+  tryClaim      (RBUnit _l  rb) = Disruptor.tryClaim rb
+  tryClaimBatch (RBUnit _l  rb) = Disruptor.tryClaimBatch rb
+  write         (RBUnit _l  rb) = Disruptor.writeRingBuffer rb
+  commit        (RBUnit _l  rb) = Disruptor.publish rb
+  commitBatch   (RBUnit _l  rb) = Disruptor.publishBatch rb
+  waitFor       (RBUnit _l  rb) = Disruptor.waitFor rb
+  readCursor    (RBUnit _l  rb) = Disruptor.readCursor rb
+  tryRead       (RBUnit _l  rb) = Disruptor.readRingBuffer rb
+  addConsumer   (RBUnit _l  rb) = makeCounter <$> Disruptor.addGatingSequence rb
+  toList        (RBUnit _l  rb) = Disruptor.toList rb
+  toListSharded (RBUnit _l  rb) = toListSharded_ rb
+  {-# INLINE new #-}
+  {-# INLINE cursor #-}
+  {-# INLINE label #-}
+  {-# INLINE tryClaim #-}
+  {-# INLINE tryClaimBatch #-}
+  {-# INLINE addConsumer #-}
+  {-# INLINE waitFor #-}
+  {-# INLINE tryRead #-}
+  {-# INLINE write #-}
+  {-# INLINE commit #-}
+  {-# INLINE commitBatch #-}
+  {-# INLINE readCursor #-}
+  {-# INLINE toList #-}
+
 instance  HasRB (Either a b) where
   data RB (Either a b)        = RBEither [Label] (RingBuffer (Either a b))
-  new l n                     = RBEither [l] <$> Disruptor.newRingBuffer_ n
+  new l n ws                  = RBEither [l] <$> Disruptor.newRingBuffer_ n ws
   cursor        (RBEither _l rb) = makeCounter (Disruptor.rbCursor rb)
   label         (RBEither  l _rb) = l
   tryClaim      (RBEither _l rb) = Disruptor.tryClaim rb
@@ -236,6 +340,19 @@ instance  HasRB (Either a b) where
   addConsumer   (RBEither _l rb) = makeCounter <$> Disruptor.addGatingSequence rb
   toList        (RBEither _l rb) = Disruptor.toList rb
   toListSharded (RBEither _l rb) = toListSharded_ rb
+  {-# INLINE new #-}
+  {-# INLINE cursor #-}
+  {-# INLINE label #-}
+  {-# INLINE tryClaim #-}
+  {-# INLINE tryClaimBatch #-}
+  {-# INLINE addConsumer #-}
+  {-# INLINE waitFor #-}
+  {-# INLINE tryRead #-}
+  {-# INLINE write #-}
+  {-# INLINE commit #-}
+  {-# INLINE commitBatch #-}
+  {-# INLINE readCursor #-}
+  {-# INLINE toList #-}
   {-
   data RB (Either a b) = RBEither (RB a) (RB b)
   new n = RBEither <$> new n <*> new n

@@ -49,7 +49,7 @@ toListSharded_ rb s = do
           then do
             -- putStrLn $ "toListSharded_, small in partition: " ++ show lo ++ ", " ++ show s
             -- XXX: use unsafeRead?
-            !x <- readArray (elements rb) lo `catch` (\(e :: SomeException) -> putStrLn ("READARRAY ERROR: " ++ show e) >> error "blah")
+            !x <- readArray (elements rb) lo
             goSmall (lo + 1) hi (x : acc)
           else do
             -- putStrLn $ "toListSharded_, small not in partition: " ++ show lo
@@ -64,7 +64,7 @@ toListSharded_ rb s = do
           if partition (coerce ix) s
           then do
             -- XXX: use unsafeRead?
-            !x <- readArray (elements rb) ix `catch` (\(e :: SomeException) -> putStrLn ("READARRAY ERROR: " ++ show e) >> error "blash")
+            !x <- readArray (elements rb) ix
             goBig produced (lo + 1) hi (x : acc)
           else
             goBig produced (lo + 1) hi acc
