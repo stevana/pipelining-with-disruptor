@@ -11,7 +11,7 @@ import QueueDeployment (runTBQueueCopying, runTBQueueCopyingSharded)
 ------------------------------------------------------------------------
 
 iTERATIONS :: Int
-iTERATIONS = 4000000
+iTERATIONS = 50000000
 
 ------------------------------------------------------------------------
 

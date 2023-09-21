@@ -34,10 +34,10 @@ rB_BATCH_SIZE :: Int
 rB_BATCH_SIZE = 128
 
 rB_WAIT_STRATEGY :: WaitStrategy
-rB_WAIT_STRATEGY = Spin 1
+rB_WAIT_STRATEGY = MVar -- Spin 1
 
 rB_BACK_PRESSURE :: IO ()
-rB_BACK_PRESSURE = threadDelay 1
+rB_BACK_PRESSURE = threadDelay 100
 
 dATE_FORMAT :: String
 dATE_FORMAT = "%F_%T%Q" -- YYYY-MM-DD_HH:MM:SS.PICOS
@@ -354,23 +354,24 @@ batching n io xs stop = go
         rB_BACK_PRESSURE
         go
       else do
-        -- XXX: use a pre-allocated array...
-        es <- replicateM n io
         -- XXX: For debugging:
         -- delay <- randomRIO (5000, 30000)
         -- threadDelay delay
         let hi = coerce mhi
             lo = hi - coerce n
         -- putStrLn $ "batching, lo: " ++ show lo ++ ", hi: " ++ show hi
-        Disruptor.iter lo hi $ \i -> do
-          write xs i (es !! coerce (i - lo - 1))
+        go' (lo + 1) hi
         commit xs hi
-        go' lo es
-
-    go' _i []                  = go
-    go' i  (Input _ : es)      = go' (i + 1) es
-    go' i  (EndOfStream : _es) = writeIORef stop i
-
+      where
+        go' :: SequenceNumber -> SequenceNumber -> IO ()
+        go' !lo hi | lo > hi   = go
+                   | otherwise = do
+                       mx <- io
+                       case mx of
+                         Input _ -> do
+                           write xs lo mx
+                           go' (lo + 1) hi
+                         EndOfStream -> writeIORef stop lo
 
 runFlow :: Flow -> IO ()
 runFlow (StdInOut p) = do
