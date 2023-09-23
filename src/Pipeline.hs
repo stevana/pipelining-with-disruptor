@@ -347,6 +347,7 @@ nonBatching io xs stop = go
 batching :: Int -> IO (Input a) -> RB (Input a) -> IORef SequenceNumber -> IO ()
 batching n io xs stop = go
   where
+    go :: IO ()
     go = do
       mhi <- tryClaimBatch xs n
       if mhi == Disruptor.nothingSN
@@ -361,17 +362,17 @@ batching n io xs stop = go
             lo = hi - coerce n
         -- putStrLn $ "batching, lo: " ++ show lo ++ ", hi: " ++ show hi
         go' (lo + 1) hi
-        commit xs hi
-      where
-        go' :: SequenceNumber -> SequenceNumber -> IO ()
-        go' !lo hi | lo > hi   = go
-                   | otherwise = do
-                       mx <- io
-                       case mx of
-                         Input _ -> do
-                           write xs lo mx
-                           go' (lo + 1) hi
-                         EndOfStream -> writeIORef stop lo
+
+    go' :: SequenceNumber -> SequenceNumber -> IO ()
+    go' !lo hi | lo > hi   = commit xs hi >> go
+               | otherwise = do
+                   mx <- io
+                   write xs lo mx
+                   case mx of
+                     Input _     -> go' (lo + 1) hi
+                     EndOfStream -> do
+                       commit xs lo
+                       writeIORef stop lo
 
 runFlow :: Flow -> IO ()
 runFlow (StdInOut p) = do
