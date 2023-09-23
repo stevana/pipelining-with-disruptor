@@ -621,6 +621,16 @@ tBQueueSleepSeq =
 
 ## Sharding
 
+Sharding, or partition parallelism as Jim calls it, is a way to make a copy of a
+pipeline and divert half of the events to the first copy and the other half to
+the other copy. Assuming there are enough unused CPUs/core, this could
+effectively double the throughput. It might be helpful to think of the events at
+even positions in the stream going to the first pipeline copy while the events
+in the odd positions in the stream go to the second copy of the pipeline[^6].
+
+When we shard in the `TBQueue` deployment of pipelines we end up copying events
+from the original stream into the two pipeline copies.
+
 ## Observability
 
 * https://github.com/stevana/svg-viewer-in-svg#svg-viewer-written-in-svg
@@ -634,18 +644,17 @@ as follows.
 ```bash
 cat data/test.txt | cabal run uppercase
 cat data/test.txt | cabal run wc
-seq 1 100 | cabal run factor
 ```
 
-XXX: update to use cabal:
 ```bash
-ghc -O2 src/Pipeline.hs -o ./hs-wc -threaded -prof -fprof-auto -rtsopts
-
-cat data/test.txt | ./hs-wc +RTS -p -N
-
-ghc-prof-flamegraph hs-wc.prof
-firefox hs-wc.svg
+cabal build copying && \
+  time cabal run copying -- --no-sharding && \
+  eventlog2html copying.eventlog && \
+  ghc-prof-flamegraph copying.prof
+  firefox copying.eventlog.html
+  firefox copying.svg
 ```
+
 
 ## Further work
 
@@ -705,3 +714,13 @@ firefox hs-wc.svg
 
 [^5]: I'm not sure what the best way to fix this is, perhaps using the
     constrained/restricted monad trick?
+
+[^6]: We can partition on even or odd indices as follows: `even(i) := i % 2 ==
+    0 + 0` and `odd(i) := i % 2 == 0 + 1`. Written this way we can easier see
+    how to generalise to `N` partitions: `partition(n, i) := i % N == 0 + n`. So
+    for `N = 2` then `partition(0) == even` while `partition(1) == odd`. Since
+    sharding and sharding a shard, etc always introduce a power of two we can
+    further optimise to use bitwise or as follows: `partition(n, i) := i | (N -
+    1) == 0 + n` thereby avoiding the expensive modulus computation. This is a
+    trick used in Disruptor as well, and the reason why the capacity of a
+    Disruptor always needs to be a power of two.
