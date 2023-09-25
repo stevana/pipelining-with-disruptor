@@ -72,36 +72,33 @@ at the very end of her Turing award
 >  other world. Maybe we need languages that are a little bit more
 >  complete now, so that we can write the whole thing in the language."
 
-Ideally we'd like our pipelines to seemlessly span over multiple computers.
-
-In fact it should be possible to deploy same pipeline to different
-configurations of processors without changing the pipeline code.
+Ideally we'd like our pipelines to seemlessly span over multiple computers. In
+fact it should be possible to deploy same pipeline to different configurations
+of processors without changing the pipeline code.
 
 A pipeline that is redeployed with additional CPUs or computers might or might
 not scale, it depends on whether it makes sense to partition the input of a
 stage further or if perhaps the introduction of an additonal computer merely
-adds more overhead.
-
-How exactly the pipeline is best spread over the available computers and
-CPUs/cores will require some combination of domain knowledge, measurement and
-judgement.
-
-Depending on how quick we can make redeploying of pipelines, it might be
-possilbe to autoscale them using a program that monitors the queue lengths.
+adds more overhead. How exactly the pipeline is best spread over the available
+computers and CPUs/cores will require some combination of domain knowledge,
+measurement and judgement. Depending on how quick we can make redeploying of
+pipelines, it might be possilbe to
+[autoscale](https://github.com/stevana/elastically-scalable-thread-pools) them
+using a program that monitors the queue lengths.
 
 Also related to redeploying, but even more important than autoscaling, are
-upgrades of pipelines.
+upgrades of pipelines. That's both upgrading the code running at the individual
+stages, as well as how the stages are conncected to each other, i.e. the
+pipeline itself.
 
-Both upgrading the code running at the individual stages, but also the pipeline
-itself.
+Martin Thompson has given many
+[talks](https://www.youtube.com/watch?v=_KvFapRkR9I) which echo the general
+ideas of Jim and Barbara. If you prefer reading then you can also have a look at
+the [reactive manifesto](https://www.reactivemanifesto.org/) which Martin
+cowrote.
 
-
-More recently, Martin Thompson has given many talks which echo the general ideas
-of Jim and Barbara. Martin also coauthored the [reactive
-manifesto](https://www.reactivemanifesto.org/) which captures many of these
-ideas in text. Martin is also one of the people behind the Disruptor, which we
-will come back to soon, and he also [said](https://youtu.be/OqsAGFExFgQ?t=2532)
-the following:
+Martin is also one of the people behind the Disruptor, which we will come back
+to soon, and he also [said](https://youtu.be/OqsAGFExFgQ?t=2532) the following:
 
 > "If there's one thing I'd say to the Erlang folks, it's you got the stuff right
 > from a high-level, but you need to invest in your messaging infrastructure so
@@ -110,8 +107,8 @@ the following:
 
 which together with Joe Armstrong's
 [anecdote](https://youtu.be/bo5WL5IQAd0?t=2494) of an unmodified Erlang program
-*only* running 33 times faster on a 64 core machine has made me think about how
-one can improve upon the already excellent work that Erlang is doing in this
+*only* running 33 times faster on a 64 core machine inspired me to think about
+how one can improve upon the already excellent work that Erlang is doing in this
 space.
 
 Longer term, I like to think of pipelines spanning computers as a building block
