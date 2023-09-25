@@ -592,16 +592,11 @@ tBQueueSleep = MapM (const (threadDelay 250000)) :&&&
                MapM (const (threadDelay 250000)) :>>>
                MapM (const (threadDelay 250000)) :>>>
                MapM (const (threadDelay 250000))
-
-tBQueueSleepSharded :: P () ()
-tBQueueSleepSharded = Shard tBQueueSleep
 ```
 
 ```
 > runTBQueueSleep
 (1.76 secs, 907,160 bytes)
-> runTBQueueSleepSharded
-(1.26 secs, 920,888 bytes)
 ```
 
 ```haskell
@@ -626,14 +621,120 @@ pipeline and divert half of the events to the first copy and the other half to
 the other copy. Assuming there are enough unused CPUs/core, this could
 effectively double the throughput. It might be helpful to think of the events at
 even positions in the stream going to the first pipeline copy while the events
-in the odd positions in the stream go to the second copy of the pipeline[^6].
+in the odd positions in the stream go to the second copy of the pipeline.
 
 When we shard in the `TBQueue` deployment of pipelines we end up copying events
-from the original stream into the two pipeline copies.
+from the original stream into the two pipeline copies. This is similar to
+copying when fanning out, which we discussed above, and the solution is
+similar.
+
+First we
+
+```haskell
+Shard :: P a b -> P a (Sharded b)
+```
+
+```haskell
+newtype Sharded a = Sharded a
+```
+
+```haskell
+data RB (Sharded a) = RBShard Sharding Sharding (RB a) (RB a)
+```
+
+```haskell
+deploy (Shard p) s xs = do
+  let (s1, s2) = addShard s
+  ys1 <- deploy p s1 xs
+  ys2 <- deploy p s2 xs
+  return (RBShard s1 s2 ys1 ys2)
+```
+
+```haskell
+readRingBufferRB (RBShard s1 s2 xs ys) i = do
+  if partition i s1
+  then coerce (readRingBufferRB xs i)
+  else if partition i s2
+       then coerce (readRingBufferRB ys i)
+       else error "tryRead, RBShard"
+```
+
+```haskell
+data Sharding = Sharding
+  { sIndex :: Int
+  , sTotal :: Int
+  }
+  deriving Show
+```
+
+```haskell
+noSharding :: Sharding
+noSharding = Sharding 0 1
+
+addShard :: Sharding -> (Sharding, Sharding)
+addShard (Sharding i total) =
+  ( Sharding i (total * 2)
+  , Sharding (i + total) (total * 2)
+  )
+
+partition :: SequenceNumber -> Sharding -> Bool
+partition i (Sharding n total) = coerce i .&. (total - 1) == 0 + n
+```
+
+ We can partition on even or odd indices as follows: `even(i) := i % 2 == 0 + 0`
+and `odd(i) := i % 2 == 0 + 1`. Written this way we can easier see how to
+generalise to `N` partitions: `partition(n, i) := i % N == 0 + n`. So for `N =
+2` then `partition(0) == even` while `partition(1) == odd`. Since sharding and
+sharding a shard, etc always introduce a power of two we can further optimise to
+use bitwise or as follows: `partition(n, i) := i | (N - 1) == 0 + n` thereby
+avoiding the expensive modulus computation. This is a trick used in Disruptor as
+well, and the reason why the capacity of a Disruptor always needs to be a power
+of two.
+
+See the `HasRB (Sharded a)` instance in the following
+[module](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/RingBufferClass.hs)
+for the details.
+
+
+```haskell
+tBQueueSleepSharded :: P () ()
+tBQueueSleepSharded = Shard tBQueueSleep
+```
+
+```
+> runTBQueueSleepSharded
+(1.26 secs, 920,888 bytes)
+```
+
 
 ## Observability
 
-* https://github.com/stevana/svg-viewer-in-svg#svg-viewer-written-in-svg
+Given that pipelines are directed acyclic graphs and that we have a concrete
+datatype constructor for each pipeline combinator, it's relatively straight
+forward to add a visualisation of a deployment.
+
+Furthermore, since each Disruptor has a `cursor` keeping that of how many
+elements it produced and all the consumers of a Disruptor have one keeping track
+of how many elements they have consumed, we can annotate our deployment
+visualisation with this data and get a good idea of the progress the pipeline is
+making over time as well as spot potential bottlenecks.
+
+Here's an example of such an visualisation, for a wordcount pipeline, as an
+interactive SVG (you need to click on the image):
+
+[![Demo](https://stevana.github.io/svg-viewer-in-svg/wordcount-pipeline.svg)](https://stevana.github.io/svg-viewer-in-svg/wordcount-pipeline.svg)
+
+The way it's implemented is that we spawn a separate thread that read the
+producer's cursors and consumer's gating sequences (`IORef SequenceNumber` in
+both cases) every millisecond and saves the `SequenceNumber`s (integers). After
+collecting this data we can create one dot diagram for everytime the data
+changed. In the demo above, we also collected all the elements of the Disruptor,
+this is useful for debugging (the implementation of the pipeline library), but
+it would probably be too expensive to enable this when there's a lot of items to
+be processed.
+
+I have written a separate write up on how to make the SVG interactive over
+[here](https://github.com/stevana/svg-viewer-in-svg#svg-viewer-written-in-svg).
 
 ## Running
 
@@ -662,6 +763,7 @@ cabal build copying && \
 * Actual Arrow instance
 * Can we be avoid copying when using Either?
 * More monitoring?
+* Ability to turn monitoring on and off at runtime
 * Deploy across network of computers
 * Hot-code upgrades of workers/stages with zero downtim
 * Shard/scale/reroute pipelines and add more machines without downtime
@@ -714,13 +816,3 @@ cabal build copying && \
 
 [^5]: I'm not sure what the best way to fix this is, perhaps using the
     constrained/restricted monad trick?
-
-[^6]: We can partition on even or odd indices as follows: `even(i) := i % 2 ==
-    0 + 0` and `odd(i) := i % 2 == 0 + 1`. Written this way we can easier see
-    how to generalise to `N` partitions: `partition(n, i) := i % N == 0 + n`. So
-    for `N = 2` then `partition(0) == even` while `partition(1) == odd`. Since
-    sharding and sharding a shard, etc always introduce a power of two we can
-    further optimise to use bitwise or as follows: `partition(n, i) := i | (N -
-    1) == 0 + n` thereby avoiding the expensive modulus computation. This is a
-    trick used in Disruptor as well, and the reason why the capacity of a
-    Disruptor always needs to be a power of two.
