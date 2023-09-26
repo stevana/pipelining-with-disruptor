@@ -74,7 +74,8 @@ at the very end of her Turing award
 
 Ideally we'd like our pipelines to seemlessly span over multiple computers. In
 fact it should be possible to deploy same pipeline to different configurations
-of processors without changing the pipeline code.
+of processors without changing the pipeline code (nor having to add any
+networking related code).
 
 A pipeline that is redeployed with additional CPUs or computers might or might
 not scale, it depends on whether it makes sense to partition the input of a
@@ -119,35 +120,49 @@ easier to program distributed systems by providing generic building blocks.
 
 ## Prior work
 
-Working with streams of data is common.
+Working with streams of data is common. The reason for this is that it's a nice
+abstraction when dealing with data that cannot fit in memory.
 
-Many streaming libraries are not:
+When one has big volumes of data it's also common to care about performance and
+how we can utilise multiple processors.
+
+Dealing with limited memory and multi processors is a problem that as bothered
+programmers and computer scientists for a long time, at least the 1960s.
+
+I'd like to be upfront with the fact I'm only familiar with a small fraction of
+the work in this space.
+
+Nevertheless here are some observations.
+
+* Back in the 60s: dataflow, FBP
+
+* 70s: unix pipes
+
+* 2010: gnu parallel
+
+* 2010s: haskell pipes, conduit. scala's akka streams, clojure transducers (2014), java8 streams (2014)
+
+* 2010s: apache spark (2014), apache kafka (2011), apache storm (2011), apache flink (2011)
+
+* FRP (1997)
+* LMAX Disruptor (2011)
+  -  Disruptor wizard
+* Aeron (2014)
+
+There are many streaming libraries are not:
 
   1. doing parallel processing (or if so, they don't do it deterministically or
-     without copying data)
+     without copying data nor sharding)
   2. cannot span multiple computers
   3. no observability
 
 Don't have a good deploy, upgrade, rescale story.
-
-### Haskell
-
-* Pipes / Conduit
-* streamly
 
 ### Scala
 
 * Akka streams and Akka cluster
 * Spark streaming
 
-### Clojure
-
-* transducers
-
-### Java
-
-* Disruptor wizard
-* Aeron
 
 ### Erlang / Elixir
 
