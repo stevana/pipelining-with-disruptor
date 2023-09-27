@@ -134,19 +134,68 @@ the work in this space.
 
 Nevertheless here are some observations.
 
-* Back in the 60s: dataflow, FBP
+In 1963 Melvin Conway proposed
+[coroutines](https://dl.acm.org/doi/10.1145/366663.366704), which allows the
+user to conveniently process very large, or even infinite, lists of items
+without first loading the list into memory, i.e. streaming.
 
-* 70s: unix pipes
+Shortly after, in 1965, Peter Landin introduced
+[streams](https://dl.acm.org/doi/10.1145/363744.363749) as a functional analogue
+of Melvin's imperative coroutines.
 
-* 2010: gnu parallel
+A more radical departure from von Neumann-style sequential programming can be
+seen in the work on [dataflow
+programming](https://en.wikipedia.org/wiki/Dataflow_programming) in general and
+especially in Paul Morrison's [flow-based
+programming](https://jpaulm.github.io/fbp/index.html) (late 1960s).
 
-* 2010s: haskell pipes, conduit. scala's akka streams, clojure transducers (2014), java8 streams (2014)
+Paul uses the analogy between flow-based programming and a data factory..
+  - pipelining in manufactoring
+  - implicit paralleism
+  - determinate
+  - coroutines were also implicit parallel
+
+Doug McIlroy, who was aware of the dataflow work, wrote a
+[memo](http://doc.cat-v.org/unix/pipes/) in 1964 about the idea of pipes,
+although it took until 1973 for them to get implemented by Ken Thompson.
+
+* "A key feature of these pipelines is their "hiding of internals" (Ritchie &
+  Thompson, 1974)."
+  - no implicit parallelism anymore?
+
+* 2010: gnu parallel (explicit parallelism?)
+
+* 2010s: haskell pipes (2012), conduit (2011). scala's akka streams, clojure transducers (2014), java8 streams (2014)
 
 * 2010s: apache spark (2014), apache kafka (2011), apache storm (2011), apache flink (2011)
+  - ALF, stat about 80% of jobs better of on single computer?
+
+* Erlang/Elixir
+  + https://elixir-lang.org/blog/2016/07/14/announcing-genstage/
+  + https://hexdocs.pm/gen_stage/1.0.0/GenStage.html
+    - Gives up on ordering, https://youtu.be/XPlXNUXmcgE?t=788
+  + ALF: https://www.youtube.com/watch?v=2XrYd1W5GLo
+  + https://github.com/dashbitco/broadway
+
+  + Either local or distributed
+    - akka stream refs + cluster? https://doc.akka.io/docs/akka/current/stream/stream-refs.html
 
 * FRP (1997)
+  - https://hackage.haskell.org/package/dunai-0.11.2/docs/Data-MonadicStreamFunction-Parallel.html
+  - [Parallel Functional Reactive Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson et al. (2000)
+
+  - http://conal.net/papers/push-pull-frp/push-pull-frp.pdf
+  > "Peterson et al. (2000) explored opportunities for parallelism in
+  > implementing a variation of FRP. While the underlying semantic
+  > model was not spelled out, it seems that semantic determinacy was
+  > not preserved, in contrast to the semantically determinate concur-
+  > rency used in this paper (Section 11)."
+
+  - Where "determinate" is defined in
+    http://conal.net/papers/warren-burton/Indeterminate%20behavior%20with%20determinate%20semantics%20in%20parallel%20programs.pdf
+
 * LMAX Disruptor (2011)
-  -  Disruptor wizard
+  - Disruptor wizard
 * Aeron (2014)
 
 There are many streaming libraries are not:
@@ -157,41 +206,6 @@ There are many streaming libraries are not:
   3. no observability
 
 Don't have a good deploy, upgrade, rescale story.
-
-### Scala
-
-* Akka streams and Akka cluster
-* Spark streaming
-
-
-### Erlang / Elixir
-
-* https://elixir-lang.org/blog/2016/07/14/announcing-genstage/
-* https://hexdocs.pm/gen_stage/1.0.0/GenStage.html
-  - Gives up on ordering, https://youtu.be/XPlXNUXmcgE?t=788
-* ALF: https://www.youtube.com/watch?v=2XrYd1W5GLo
-* https://github.com/dashbitco/broadway
-
-### Dataflow
-
-* Lustre / SCADA / Esterel
-* https://en.wikipedia.org/wiki/Dataflow_programming
-* https://github.com/samuell/awesome-fbp
-
-### (Functional) reactive programming
-
-* https://hackage.haskell.org/package/dunai-0.11.2/docs/Data-MonadicStreamFunction-Parallel.html
-* [Parallel Functional Reactive Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson et al. (2000)
-
-* http://conal.net/papers/push-pull-frp/push-pull-frp.pdf
-> "Peterson et al. (2000) explored opportunities for parallelism in
-> implementing a variation of FRP. While the underlying semantic
-> model was not spelled out, it seems that semantic determinacy was
-> not preserved, in contrast to the semantically determinate concur-
-> rency used in this paper (Section 11)."
-
-* Where "determinate" is defined in
-  http://conal.net/papers/warren-burton/Indeterminate%20behavior%20with%20determinate%20semantics%20in%20parallel%20programs.pdf
 
 ## Plan
 
@@ -775,9 +789,13 @@ cabal build copying && \
 * Actual Arrow instance
 * Can we be avoid copying when using Either?
 * More monitoring?
+* Actually test using `prop_commute`?
 * Ability to turn monitoring on and off at runtime
 * Deploy across network of computers
-* Hot-code upgrades of workers/stages with zero downtim
+* Hot-code upgrades of workers/stages with zero downtime
+* Reconfiguration, [Coroutines and Networks of Parallel
+  Processes](https://inria.hal.science/inria-00306565) by Gilles Kahn and David
+  MacQueen (1976)
 * Shard/scale/reroute pipelines and add more machines without downtime
   - auto scaling thread pools, https://github.com/stevana/elastically-scalable-thread-pools
 * Generator for pipelines
