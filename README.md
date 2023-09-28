@@ -149,36 +149,76 @@ programming](https://en.wikipedia.org/wiki/Dataflow_programming) in general and
 especially in Paul Morrison's [flow-based
 programming](https://jpaulm.github.io/fbp/index.html) (late 1960s).
 
-Paul uses the analogy between flow-based programming and a data factory..
-  - pipelining in manufactoring
-  - implicit paralleism
-  - determinate
-  - coroutines were also implicit parallel
+Paul uses the following picture to illustrate the similarity between flow-based
+programming and an assembly line in manufacturing:
+
+![](data/bottling_factory.png)
+
+Each stage is its own process running in parallel with the other stages. In
+flow-based programming stages are computation and the conveyor belts are queues.
+
+This gives us implicit paralellism and determinate outcome.
 
 Doug McIlroy, who was aware of the dataflow work, wrote a
 [memo](http://doc.cat-v.org/unix/pipes/) in 1964 about the idea of pipes,
-although it took until 1973 for them to get implemented by Ken Thompson.
+although it took until 1973 for them to get implemented in Unix by Ken Thompson.
 
-* "A key feature of these pipelines is their "hiding of internals" (Ritchie &
-  Thompson, 1974)."
-  - no implicit parallelism anymore?
+While Unix pipes have a strong feel of flow-based programming, all data is of
+type string, implicit parallelism is gone and processes cannot
+multicast/broadcast their output to more than one process easily, i.e. linear
+rather than DAG.
 
-* 2010: gnu parallel (explicit parallelism?)
+Some of the lost ground was recoverd around 2010 when GNU parallel was released.
+The parallelism is rather explicit though, which might not be a bad thing per
+say.
 
-* 2010s: haskell pipes (2012), conduit (2011). scala's akka streams, clojure transducers (2014), java8 streams (2014)
+Around the same time many programming languages started getting streaming libraries:
+
+* 2010s: haskell pipes (2012), conduit (2011). scala's akka streams, clojure
+  transducers (2014), java8 streams (2014)
+
+I don't know exactly what started this trend. The idea seemed to have been
+around since the 60s, as we noted above. Perhaps the hype around "big data"
+which happend around that time?
+
+All of the above mentioned streaming libraries, with perhaps the
+[exception](https://doc.akka.io/docs/akka/current/stream/stream-refs.html) of
+Akka streams, are intended to be run on a single computer.
+
+Often they even run in a single thread, i.e. not exploiting parallelism at all.
+
+Sometimes concurrent/async constructs are availble, but they break determinism.
+
+If the data volumes are too big for a single computer then there's a different
+set of tools:
 
 * 2010s: apache spark (2014), apache kafka (2011), apache storm (2011), apache flink (2011)
-  - ALF, stat about 80% of jobs better of on single computer?
 
-* Erlang/Elixir
-  + https://elixir-lang.org/blog/2016/07/14/announcing-genstage/
-  + https://hexdocs.pm/gen_stage/1.0.0/GenStage.html
-    - Gives up on ordering, https://youtu.be/XPlXNUXmcgE?t=788
-  + ALF: https://www.youtube.com/watch?v=2XrYd1W5GLo
-  + https://github.com/dashbitco/broadway
+* Streaming libraries don't scale up
+* streaming frameworks don't scale down / cumbersome to use as libraries?
+* Fails the reactive manifesto principle of scaling?
 
-  + Either local or distributed
-    - akka stream refs + cluster? https://doc.akka.io/docs/akka/current/stream/stream-refs.html
+* stat about 40-80% of jobs submitted to mapreduce systems are better of on
+  single computer?
+  - https://youtu.be/XPlXNUXmcgE?t=2783
+  - https://www.youtube.com/watch?v=2XrYd1W5GLo
+  - has monitoring/observability
+  - experimenal auto scaling
+
+* Flow (2017)/FlowEx (2017) /ALF (2021)
+
+* LMAX Disruptor (2011)
+  - Disruptor wizard
+* Aeron (2014)
+
+There are many streaming libraries but they are not:
+
+  1. doing parallel processing (or if so, they don't do it deterministically or
+     without copying data nor sharding)
+  2. cannot span multiple computers
+  3. no observability
+
+Don't have a good deploy, upgrade, rescale story.
 
 * FRP (1997)
   - https://hackage.haskell.org/package/dunai-0.11.2/docs/Data-MonadicStreamFunction-Parallel.html
@@ -194,18 +234,6 @@ although it took until 1973 for them to get implemented by Ken Thompson.
   - Where "determinate" is defined in
     http://conal.net/papers/warren-burton/Indeterminate%20behavior%20with%20determinate%20semantics%20in%20parallel%20programs.pdf
 
-* LMAX Disruptor (2011)
-  - Disruptor wizard
-* Aeron (2014)
-
-There are many streaming libraries are not:
-
-  1. doing parallel processing (or if so, they don't do it deterministically or
-     without copying data nor sharding)
-  2. cannot span multiple computers
-  3. no observability
-
-Don't have a good deploy, upgrade, rescale story.
 
 ## Plan
 
