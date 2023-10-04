@@ -57,6 +57,9 @@ and even sequence number, and feeding one half of the inputs to one copy of the
 pipeline and the other half to another copy, thereby almost doubling the
 throughput. Jim calls this a "natural" way to achieve parallelism.
 
+XXX: natural because that's how we achieve parallelism in other fields such as
+manufacturing and hardware?
+
 While I'm not sure if "natural" is the best word, I do agree that it's a nice
 way to make good use of CPUs/cores on a single computer without introducing
 non-determinism.
@@ -152,7 +155,7 @@ programming](https://jpaulm.github.io/fbp/index.html) (late 1960s).
 Paul uses the following picture to illustrate the similarity between flow-based
 programming and an assembly line in manufacturing:
 
-![](data/bottling_factory.png)
+![](https://raw.githubusercontent.com/stevana/pipelining-with-disruptor/main/data/bottling_factory.png)
 
 Each stage is its own process running in parallel with the other stages. In
 flow-based programming stages are computation and the conveyor belts are queues.
@@ -163,31 +166,32 @@ Doug McIlroy, who was aware of the dataflow work, wrote a
 [memo](http://doc.cat-v.org/unix/pipes/) in 1964 about the idea of pipes,
 although it took until 1973 for them to get implemented in Unix by Ken Thompson.
 
-While Unix pipes have a strong feel of flow-based programming, all data is of
-type string, implicit parallelism is gone and processes cannot
-multicast/broadcast their output to more than one process easily, i.e. linear
-rather than DAG.
+While Unix pipes have a strong feel of flow-based programming, where all data is
+of type string. A pipeline of commands will start a process per command, so
+there's implicit parallelism as well.
 
-Some of the lost ground was recoverd around 2010 when GNU parallel was released.
-The parallelism is rather explicit though, which might not be a bad thing per
-say.
+Fanning out can be done with `tee` and process substitution, e.g. `echo foo |
+tee >(cat) >(cat) | cat`, and more complicated non-linear flows can be achieved
+with `mkfifo`.
+
+With the release of GNU `parallel` in 2010 more explicit control over
+parallelism was introduced as well as the ability to run jobs on remote
+computers.
 
 Around the same time many programming languages started getting streaming libraries:
 
-* 2010s: haskell pipes (2012), conduit (2011). scala's akka streams, clojure
+* 2010s: haskell pipes (2012), conduit (2011). scala's akka streams (2014), clojure
   transducers (2014), java8 streams (2014)
 
-I don't know exactly what started this trend. The idea seemed to have been
+I don't know exactly what started this trend. The idea seems to have been
 around since the 60s, as we noted above. Perhaps the hype around "big data"
 which happend around that time?
 
-All of the above mentioned streaming libraries, with perhaps the
-[exception](https://doc.akka.io/docs/akka/current/stream/stream-refs.html) of
-Akka streams, are intended to be run on a single computer.
+Almost all of the above mentioned streaming libraries are intended to be run on a single computer.
 
 Often they even run in a single thread, i.e. not exploiting parallelism at all.
-
 Sometimes concurrent/async constructs are availble, but they break determinism.
+Java streams parallel and forEachOrdered?
 
 If the data volumes are too big for a single computer then there's a different
 set of tools:
@@ -195,45 +199,58 @@ set of tools:
 * 2010s: apache spark (2014), apache kafka (2011), apache storm (2011), apache flink (2011)
 
 * Streaming libraries don't scale up
-* streaming frameworks don't scale down / cumbersome to use as libraries?
+* streaming platforms/frameworks don't scale down / cumbersome to use as libraries?
 * Fails the reactive manifesto principle of scaling?
 
-* stat about 40-80% of jobs submitted to mapreduce systems are better of on
-  single computer?
+* this is a shame, because: stat about 40-80% of jobs submitted to mapreduce
+  systems are better of on single computer?
+
+* Akka streams (2014), is perhaps an
+  [exception](https://doc.akka.io/docs/akka/current/stream/stream-refs.html) of
+  a streaming library that can also be distributed via akka cluster?
+
+* (Elixir: Flow (2017) / FlowEx (2017) / ALF (2021))
   - https://youtu.be/XPlXNUXmcgE?t=2783
   - https://www.youtube.com/watch?v=2XrYd1W5GLo
   - has monitoring/observability
   - experimenal auto scaling
 
-* Flow (2017)/FlowEx (2017) /ALF (2021)
-
 * LMAX Disruptor (2011)
-  - Disruptor wizard
-* Aeron (2014)
+  - Dataflow like, processes a stream of requests
+  - parallelism, via sharding
+  - Disruptor wizard / Akka's [graph
+    DSL](https://doc.akka.io/docs/akka/current/stream/stream-graphs.html)
+  - Not 24/7 operation
 
-There are many streaming libraries but they are not:
+* Aeron (2014)
+  - Spritual successor of Disruptor
+  - 24/7 operation
+    + replication
+    + leader election
+    + observability
+
+To summarise, there are many streaming libraries but they are not:
 
   1. doing parallel processing (or if so, they don't do it deterministically or
      without copying data nor sharding)
-  2. cannot span multiple computers
+  2. can seamlessly scale from single to multiple computers
   3. no observability
+  4. declarative high-level way of expressing stream processing networks
 
 Don't have a good deploy, upgrade, rescale story.
 
-* FRP (1997)
-  - https://hackage.haskell.org/package/dunai-0.11.2/docs/Data-MonadicStreamFunction-Parallel.html
-  - [Parallel Functional Reactive Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson et al. (2000)
-
-  - http://conal.net/papers/push-pull-frp/push-pull-frp.pdf
-  > "Peterson et al. (2000) explored opportunities for parallelism in
-  > implementing a variation of FRP. While the underlying semantic
-  > model was not spelled out, it seems that semantic determinacy was
-  > not preserved, in contrast to the semantically determinate concur-
-  > rency used in this paper (Section 11)."
-
-  - Where "determinate" is defined in
-    http://conal.net/papers/warren-burton/Indeterminate%20behavior%20with%20determinate%20semantics%20in%20parallel%20programs.pdf
-
+* Finally, I'd also like to mention functional reactive programming (FRP) (1997)
+  - neat way of expressing stream processing networks
+  - not clear (to me) how effectively implement and parallelise
+    + https://hackage.haskell.org/package/dunai-0.11.2/docs/Data-MonadicStreamFunction-Parallel.html
+    + [Parallel Functional Reactive Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson et al. (2000)
+    + http://conal.net/papers/push-pull-frp/push-pull-frp.pdf
+    > "Peterson et al. (2000) explored opportunities for parallelism in
+    > implementing a variation of FRP. While the underlying semantic
+    > model was not spelled out, it seems that semantic determinacy was
+    > not preserved, in contrast to the semantically determinate concur-
+    > rency used in this paper (Section 11)."
+  - hot code swapping in FRP setting: https://github.com/turion/essence-of-live-coding
 
 ## Plan
 
@@ -815,6 +832,7 @@ cabal build copying && \
 
 * Avoid writing NoOutput
 * Actual Arrow instance
+* Does an `ArrowLoop` instance make sense?
 * Can we be avoid copying when using Either?
 * More monitoring?
 * Actually test using `prop_commute`?
