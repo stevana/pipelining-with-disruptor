@@ -192,31 +192,29 @@ part of the C++20 standard.
 Almost all of the above mentioned streaming libraries are intended to be run on
 a single computer. Often they even run in a single thread, i.e. not exploiting
 parallelism at all. Sometimes concurrent/async constructs are available which
-create a pool of workers that process the items concurrently, but they often
-break determinism (i.e. rerunning the same computation will yield different
-results, because the workers do not preserve the order of the inputs).
+create a pool of worker threads that process the items concurrently, but they
+often break determinism (i.e. rerunning the same computation will yield
+different results, because the workers do not preserve the order of the inputs).
 
 If the data volumes are too big for a single computer then there's a different
-set of streaming tools:
+set of streaming tools, such as Apache Hadoop (2006), Apache Spark (2009),
+Apache Kafka (2011), Apache Storm (2011), and Apache Flink (2011).
 
-* 2010s: apache spark (2014), apache kafka (2011), apache storm (2011), apache flink (2011)
+While the Apache tools can often be deployed locally for testing purposes, they
+are intended for distributed computations and are therefore perhaps a bit more
+cumbersome to deploy and use than the streaming libraries we mentioned earlier.
 
-* Streaming libraries don't scale up
-* streaming platforms/frameworks don't scale down / cumbersome to use as libraries?
-* Fails the reactive manifesto principle of scaling?
+Initial it might not seem like a big deal that streaming libraries don't "scale
+up" or distributed over multiple computers, and that streaming tools like the
+Apache ones don't gracefully "scale down" to a single computer. Just pick the
+right tool for the right job, right? Well, it turns out that
+[40-80%](https://youtu.be/XPlXNUXmcgE?t=2783) of jobs submitted to MapReduce
+systems (such as Apache Hadoop) would run faster if they were ran on a single
+computer instead of a distributed cluster of computers.
 
-* this is a shame, because: stat about 40-80% of jobs submitted to mapreduce
-  systems are better of on single computer?
-
-* Akka streams (2014), is perhaps an
+* Scala's Akka/Pekko streams (2014), is perhaps an
   [exception](https://doc.akka.io/docs/akka/current/stream/stream-refs.html) of
   a streaming library that can also be distributed via akka cluster?
-
-* (Elixir: Flow (2017) / FlowEx (2017) / ALF (2021))
-  - https://youtu.be/XPlXNUXmcgE?t=2783
-  - https://www.youtube.com/watch?v=2XrYd1W5GLo
-  - has monitoring/observability
-  - experimenal auto scaling
 
 * LMAX Disruptor (2011)
   - Dataflow like, processes a stream of requests
@@ -877,6 +875,9 @@ cabal build copying && \
 * Apache Beam -- windowing
 
 * Microsoft Naiad -- stage notifications
+
+* Elixir's ALF flow-based programming
+  [library](https://www.youtube.com/watch?v=2XrYd1W5GLo)
 
 
 [^1]: I noticed that the Wikipedia page for [dataflow
