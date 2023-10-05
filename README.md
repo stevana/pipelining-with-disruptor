@@ -57,12 +57,10 @@ and even sequence number, and feeding one half of the inputs to one copy of the
 pipeline and the other half to another copy, thereby almost doubling the
 throughput. Jim calls this a "natural" way to achieve parallelism.
 
-XXX: natural because that's how we achieve parallelism in other fields such as
-manufacturing and hardware?
-
 While I'm not sure if "natural" is the best word, I do agree that it's a nice
 way to make good use of CPUs/cores on a single computer without introducing
-non-determinism.
+non-determinism. Pipelining is also effectively used to achieve parallelism in
+manufacturing and hardware, perhaps that's why Jim calls it "natural"?
 
 Things get a bit more tricky if we want to involve more computers. Part of the
 reason, I believe, is that we run into the problem highlighted by Barbara Liskov
@@ -124,18 +122,19 @@ easier to program distributed systems by providing generic building blocks.
 ## Prior work
 
 Working with streams of data is common. The reason for this is that it's a nice
-abstraction when dealing with data that cannot fit in memory.
+abstraction when dealing with data that cannot fit in memory. The alternative is
+to manually load chunks of data one wants to process into memory, load the next
+chunk etc, when we processes streams this is hidden away from us.
 
-When one has big volumes of data it's also common to care about performance and
-how we can utilise multiple processors.
+Parallelism is a related problem, in that when one has big volumes of data it's
+also common to care about performance and how we can utilise multiple
+processors.
 
-Dealing with limited memory and multi processors is a problem that as bothered
-programmers and computer scientists for a long time, at least the 1960s.
-
-I'd like to be upfront with the fact I'm only familiar with a small fraction of
-the work in this space.
-
-Nevertheless here are some observations.
+Since dealing with limited memory and multi processors is a problem that as
+bothered programmers and computer scientists for a long time, at least since the
+1960s, there's a lot of work that has been done in this area. I'm at best
+familiar with a small fraction of this work, so please bear with me but also do
+let me know if I missed any important development.
 
 In 1963 Melvin Conway proposed
 [coroutines](https://dl.acm.org/doi/10.1145/366663.366704), which allows the
@@ -159,42 +158,46 @@ programming and an assembly line in manufacturing:
 
 Each stage is its own process running in parallel with the other stages. In
 flow-based programming stages are computation and the conveyor belts are queues.
-
 This gives us implicit paralellism and determinate outcome.
 
-Doug McIlroy, who was aware of the dataflow work, wrote a
+Doug McIlroy, who was aware of some of the dataflow work[^1], wrote a
 [memo](http://doc.cat-v.org/unix/pipes/) in 1964 about the idea of pipes,
 although it took until 1973 for them to get implemented in Unix by Ken Thompson.
 
-While Unix pipes have a strong feel of flow-based programming, where all data is
-of type string. A pipeline of commands will start a process per command, so
-there's implicit parallelism as well.
+Unix pipes have a strong feel of flow-based programming, although all data is of
+type string. A pipeline of commands will start a process per command, so there's
+implicit parallelism as well (assuming the operative system schedules different
+processes on different CPUs/cores). Fanning out can be done with `tee` and
+process substitution, e.g. `echo foo | tee >(cat) >(cat) | cat`, and more
+complicated non-linear flows can be achieved with `mkfifo`.
 
-Fanning out can be done with `tee` and process substitution, e.g. `echo foo |
-tee >(cat) >(cat) | cat`, and more complicated non-linear flows can be achieved
-with `mkfifo`.
+With the release of GNU [`parallel`](https://en.wikipedia.org/wiki/GNU_parallel)
+in 2010 more explicit control over parallelism was introduced as well as the
+ability to run jobs on remote computers.
 
-With the release of GNU `parallel` in 2010 more explicit control over
-parallelism was introduced as well as the ability to run jobs on remote
-computers.
+Around the same time many (functional) programming languages started getting
+streaming libraries. Haskell's
+[conduit](https://hackage.haskell.org/package/conduit) library had its first
+release in 2011 and Haskell's [pipes](https://hackage.haskell.org/package/pipes)
+library came shortly after (2012) Java version 8, which has streams, was
+released in 2014. Both [Clojure](https://clojure.org/reference/transducers) and
+[Scala](https://doc.akka.io/docs/akka/current/stream/index.html), which also use
+the JVM, got streams that same year (2014).
 
-Around the same time many programming languages started getting streaming libraries:
+Among the more imperative programming languages, Javascript and Python both have
+generators (a simple form of coroutines) since around 2006. Go has "goroutines",
+a clear nod to coroutines, since its first version (2009). Coroutines are also
+part of the C++20 standard.
 
-* 2010s: haskell pipes (2012), conduit (2011). scala's akka streams (2014), clojure
-  transducers (2014), java8 streams (2014)
-
-I don't know exactly what started this trend. The idea seems to have been
-around since the 60s, as we noted above. Perhaps the hype around "big data"
-which happend around that time?
-
-Almost all of the above mentioned streaming libraries are intended to be run on a single computer.
-
-Often they even run in a single thread, i.e. not exploiting parallelism at all.
-Sometimes concurrent/async constructs are availble, but they break determinism.
-Java streams parallel and forEachOrdered?
+Almost all of the above mentioned streaming libraries are intended to be run on
+a single computer. Often they even run in a single thread, i.e. not exploiting
+parallelism at all. Sometimes concurrent/async constructs are available which
+create a pool of workers that process the items concurrently, but they often
+break determinism (i.e. rerunning the same computation will yield different
+results, because the workers do not preserve the order of the inputs).
 
 If the data volumes are too big for a single computer then there's a different
-set of tools:
+set of streaming tools:
 
 * 2010s: apache spark (2014), apache kafka (2011), apache storm (2011), apache flink (2011)
 
@@ -373,7 +376,7 @@ instance ArrowChoice P where
 ```
 
 Ideally we'd also like to be able to use `Arrow` notation/syntax to descripe our
-pipelines[^1].
+pipelines[^2].
 
 ## Queue pipeline deployment
 
@@ -450,7 +453,7 @@ prop_commute p xs = do
 
 Actually running this property for arbitary pipelines would require us to first
 define a pipeline generator, which is a bit tricky given the indexes of the
-datatype[^2]. It can still me used as a helper for testing specific pipelines
+datatype[^3]. It can still me used as a helper for testing specific pipelines
 though, e.g. `prop_commute examplePipeline`.
 
 A bigger problem is that we've spawned two threads, when deploying `:&&&`, whose
@@ -475,7 +478,7 @@ Disruptor is implemented.
 
 We will be looking at the implementation of the single-producer Disruptor,
 because in our pipelines there will never be more than one producer per queue
-(the stage before it)[^3].
+(the stage before it)[^4].
 
 Let's first have a look at the datatype and then explain each field:
 
@@ -569,6 +572,13 @@ example = do
 See the `Disruptor` [module](src/Disruptor.hs) in case you are interested in the
 implementation details.
 
+* Why is disruptor performant?
+  - no copying when fanning out
+  - no allocation
+  - striding
+  - sharding (without copying)
+
+
 ## Disruptor pipeline deployment
 
 Recall that the reason we introduced the Disrutor was to avoid copying elements
@@ -583,7 +593,7 @@ Avoiding to copy the individual outputs from the worker's queues (of `a`s and
 One way, that I think works, is to do something reminiscent what
 [`Data.Vector`](https://hackage.haskell.org/package/vector) does for pairs.
 That's a vector of pairs (`Vector (a, b)`) is actually represented as a pair of
-vectors (`(Vector a, Vector b)`)[^4].
+vectors (`(Vector a, Vector b)`)[^5].
 
 We can achieve this with [associated
 types](http://simonmar.github.io/bib/papers/assoc.pdf) as follows:
@@ -636,7 +646,7 @@ data P :: Type -> Type -> Type where
   (:&&&) :: (HasRB b, HasRB c) => P a b -> P a c -> P a (b, c)
 ```
 
-While easy to do, we'll no longer be able to implement the `Arrow` instance[^5].
+While easy to do, we'll no longer be able to implement the `Arrow` instance[^6].
 
 ## Example
 
@@ -869,7 +879,17 @@ cabal build copying && \
 * Microsoft Naiad -- stage notifications
 
 
-[^1]: Even better would be if arrow notation worked for Cartesian categories.
+[^1]: I noticed that the Wikipedia page for [dataflow
+    programming](https://en.wikipedia.org/wiki/Dataflow_programming) mentions
+    that Jack Dennis and his graduate students pioneered that style of
+    programming while he was at MIT in the 60s. I knew Doug was at MIT around
+    that time as well, and so I sent an email to Doug asking if he knew of
+    Jack's work. Doug replied saying he was aware of Jack's work and that also
+    the work by Kelly, Lochbaum and Vyssotsky on
+    [BOLDI](https://archive.org/details/bstj40-3-669) (1961) was on his mind
+    when he wrote the garden hose memo (1964).
+
+[^2]: Even better would be if arrow notation worked for Cartesian categories.
     See Conal Elliott's work on [compiling to
     categories](http://conal.net/papers/compiling-to-categories/) , as well as
     Oleg Grenrus' GHC
@@ -877,18 +897,18 @@ cabal build copying && \
     that does the right thing and translates arrow syntax into Cartesian
     categories.
 
-[^2]: Search for "QuickCheck GADTs" if you are interested in finding out more
+[^3]: Search for "QuickCheck GADTs" if you are interested in finding out more
     about this topic.
 
-[^3]: The Disruptor also comes in a multi-producer variant, see the following
+[^4]: The Disruptor also comes in a multi-producer variant, see the following
     [repository](https://github.com/stevana/pipelined-state-machines/tree/main/src/Disruptor/MP)
     for a Haskell version or the
     [LMAX](https://github.com/LMAX-Exchange/disruptor) repository for the
     original Java implementation.
 
-[^4]: See also [array of structures vs structure of
+[^5]: See also [array of structures vs structure of
     arrays](https://en.wikipedia.org/wiki/AoS_and_SoA) in other programming
     languages.
 
-[^5]: I'm not sure what the best way to fix this is, perhaps using the
+[^6]: I'm not sure what the best way to fix this is, perhaps using the
     constrained/restricted monad trick?
