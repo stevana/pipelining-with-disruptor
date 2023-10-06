@@ -896,22 +896,22 @@ cabal build copying && \
     when he wrote the garden hose memo (1964).
 
 [^2]: There's a paper called [Parallel Functional Reactive
-   Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson
-   et al. (2000), but as Conal Elliott
-   [points](http://conal.net/papers/push-pull-frp/push-pull-frp.pdf) out:
+    Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson
+    et al. (2000), but as Conal Elliott
+    [points](http://conal.net/papers/push-pull-frp/push-pull-frp.pdf) out:
 
-   > "Peterson et al. (2000) explored opportunities for parallelism in
-   > implementing a variation of FRP. While the underlying semantic
-   > model was not spelled out, it seems that semantic determinacy was
-   > not preserved, in contrast to the semantically determinate concurrency
-   > used in this paper (Section 11)."
+    > "Peterson et al. (2000) explored opportunities for parallelism in
+    > implementing a variation of FRP. While the underlying semantic
+    > model was not spelled out, it seems that semantic determinacy was
+    > not preserved, in contrast to the semantically determinate concurrency
+    > used in this paper (Section 11)."
 
-   Conal's approach (his Section 11) seems to build upon very fine grained
-   parallelism provided by an "unambiguous choice" operator which is implemented
-   by spawning two threads. I don't understand where exactly this operator is
-   used in the implementation, but if it's used everytime an element is
-   processed (in parallel) then the overheard of spawning the threads could
-   significant?
+    Conal's approach (his Section 11) seems to build upon very fine grained
+    parallelism provided by an "unambiguous choice" operator which is implemented
+    by spawning two threads. I don't understand where exactly this operator is
+    used in the implementation, but if it's used everytime an element is
+    processed (in parallel) then the overheard of spawning the threads could
+    significant?
 
 [^3]: Even better would be if arrow notation worked for Cartesian categories.
     See Conal Elliott's work on [compiling to
