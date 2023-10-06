@@ -212,46 +212,43 @@ right tool for the right job, right? Well, it turns out that
 systems (such as Apache Hadoop) would run faster if they were ran on a single
 computer instead of a distributed cluster of computers.
 
-* Scala's Akka/Pekko streams (2014), is perhaps an
-  [exception](https://doc.akka.io/docs/akka/current/stream/stream-refs.html) of
-  a streaming library that can also be distributed via akka cluster?
+There are two exceptions, that I know of, of streaming libraries that also work
+in a distributed setting. Scala's Akka/Pekko
+[streams](https://doc.akka.io/docs/akka/current/stream/stream-refs.html) (2014)
+when combined with Akka/Pekko
+[clusters](https://github.com/apache/incubator-pekko-management) and
+[Aeron](https://aeron.io/) (2014). Aeron is the spiritual successor of the
+Disruptor also written by Martin Thompson et al. The Disruptor's main use case
+was as part of the LMAX exchange. From what I understand exchanges close in the
+evening (or at least did back then in the case of LMAX), which allows for
+updates etc. These requirements changed for Aeron where 24/7 operation was
+necessary and so distributed stream processing is necessary where upgrades can
+happen without processing stopping (or even slowing down).
 
-* LMAX Disruptor (2011)
-  - Dataflow like, processes a stream of requests
-  - parallelism, via sharding
-  - Disruptor wizard / Akka's [graph
-    DSL](https://doc.akka.io/docs/akka/current/stream/stream-graphs.html)
-  - Not 24/7 operation
+Finally, I'd also like to mention functional reactive programming, or FRP,
+(1997). I like to think of it as a neat way of expressing stream processing
+networks. Disruptor's
+["wizard"](https://github.com/LMAX-Exchange/disruptor/wiki/Disruptor-Wizard) DSL
+and Akka's [graph
+DSL](https://doc.akka.io/docs/akka/current/stream/stream-graphs.html) try to add
+a high-level syntax for expressing networks, but they both have a rather
+imperative rather than declarative feel. It's however not clear (to me) how
+effectively implement, parallelise[^2], or distribute FRP. Some interesting work
+has been done with hot code swapping in the FRP
+[setting](https://github.com/turion/essence-of-live-coding).
 
-* Aeron (2014)
-  - Spritual successor of Disruptor
-  - 24/7 operation
-    + replication
-    + leader election
-    + observability
-
-To summarise, there are many streaming libraries but they are not:
+To summarise, while there are many streaming libraries there seem to be few (if
+any, at least that I know of) that tick all of the following boxes:
 
   1. doing parallel processing (or if so, they don't do it deterministically or
      without copying data nor sharding)
-  2. can seamlessly scale from single to multiple computers
-  3. no observability
+  2. distributed, can seamlessly scale from single to multiple computers
+    + replication
+    + leader election
+  3. observability
   4. declarative high-level way of expressing stream processing networks
-
-Don't have a good deploy, upgrade, rescale story.
-
-* Finally, I'd also like to mention functional reactive programming (FRP) (1997)
-  - neat way of expressing stream processing networks
-  - not clear (to me) how effectively implement and parallelise
-    + https://hackage.haskell.org/package/dunai-0.11.2/docs/Data-MonadicStreamFunction-Parallel.html
-    + [Parallel Functional Reactive Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson et al. (2000)
-    + http://conal.net/papers/push-pull-frp/push-pull-frp.pdf
-    > "Peterson et al. (2000) explored opportunities for parallelism in
-    > implementing a variation of FRP. While the underlying semantic
-    > model was not spelled out, it seems that semantic determinacy was
-    > not preserved, in contrast to the semantically determinate concur-
-    > rency used in this paper (Section 11)."
-  - hot code swapping in FRP setting: https://github.com/turion/essence-of-live-coding
+  5. elastic
+  6. Good deploy, upgrade, rescale story.
 
 ## Plan
 
@@ -374,7 +371,7 @@ instance ArrowChoice P where
 ```
 
 Ideally we'd also like to be able to use `Arrow` notation/syntax to descripe our
-pipelines[^2].
+pipelines[^3].
 
 ## Queue pipeline deployment
 
@@ -451,7 +448,7 @@ prop_commute p xs = do
 
 Actually running this property for arbitary pipelines would require us to first
 define a pipeline generator, which is a bit tricky given the indexes of the
-datatype[^3]. It can still me used as a helper for testing specific pipelines
+datatype[^4]. It can still me used as a helper for testing specific pipelines
 though, e.g. `prop_commute examplePipeline`.
 
 A bigger problem is that we've spawned two threads, when deploying `:&&&`, whose
@@ -476,7 +473,7 @@ Disruptor is implemented.
 
 We will be looking at the implementation of the single-producer Disruptor,
 because in our pipelines there will never be more than one producer per queue
-(the stage before it)[^4].
+(the stage before it)[^5].
 
 Let's first have a look at the datatype and then explain each field:
 
@@ -591,7 +588,7 @@ Avoiding to copy the individual outputs from the worker's queues (of `a`s and
 One way, that I think works, is to do something reminiscent what
 [`Data.Vector`](https://hackage.haskell.org/package/vector) does for pairs.
 That's a vector of pairs (`Vector (a, b)`) is actually represented as a pair of
-vectors (`(Vector a, Vector b)`)[^5].
+vectors (`(Vector a, Vector b)`)[^6].
 
 We can achieve this with [associated
 types](http://simonmar.github.io/bib/papers/assoc.pdf) as follows:
@@ -644,7 +641,7 @@ data P :: Type -> Type -> Type where
   (:&&&) :: (HasRB b, HasRB c) => P a b -> P a c -> P a (b, c)
 ```
 
-While easy to do, we'll no longer be able to implement the `Arrow` instance[^6].
+While easy to do, we'll no longer be able to implement the `Arrow` instance[^7].
 
 ## Example
 
@@ -879,6 +876,14 @@ cabal build copying && \
 * Elixir's ALF flow-based programming
   [library](https://www.youtube.com/watch?v=2XrYd1W5GLo)
 
+* [How fast are Linux pipes anyway?](https://mazzo.li/posts/fast-pipes.html)
+  (2022)
+
+* [netmap](https://man.freebsd.org/cgi/man.cgi?query=netmap&sektion=4) -- a framework for fast packet I/O
+
+* [The output of Linux pipes can be
+  indeterministic](https://www.gibney.org/the_output_of_linux_pipes_can_be_indeter)
+
 
 [^1]: I noticed that the Wikipedia page for [dataflow
     programming](https://en.wikipedia.org/wiki/Dataflow_programming) mentions
@@ -890,7 +895,23 @@ cabal build copying && \
     [BOLDI](https://archive.org/details/bstj40-3-669) (1961) was on his mind
     when he wrote the garden hose memo (1964).
 
-[^2]: Even better would be if arrow notation worked for Cartesian categories.
+[^2]: There's a paper called [Parallel Functional Reactive
+    Programming](http://flint.cs.yale.edu/trifonov/papers/pfrp.pdf) by Peterson
+    et al. (2000), but as Conal Elliott
+    [points](http://conal.net/papers/push-pull-frp/push-pull-frp.pdf) out:
+    > "Peterson et al. (2000) explored opportunities for parallelism in
+    > implementing a variation of FRP. While the underlying semantic
+    > model was not spelled out, it seems that semantic determinacy was
+    > not preserved, in contrast to the semantically determinate concurrency
+    > used in this paper (Section 11)."
+    Conal's approach (his Section 11) seems to build upon very fine grained
+    parallelism provided by an "unambiguous choice" operator which is
+    implemented by spawning two threads. I don't understand where exactly this
+    operator is used in the implementation, but if it's used everytime an
+    element is processed (in parallel) then the overheard of spawning the
+    threads could significant?
+
+[^3]: Even better would be if arrow notation worked for Cartesian categories.
     See Conal Elliott's work on [compiling to
     categories](http://conal.net/papers/compiling-to-categories/) , as well as
     Oleg Grenrus' GHC
@@ -898,18 +919,18 @@ cabal build copying && \
     that does the right thing and translates arrow syntax into Cartesian
     categories.
 
-[^3]: Search for "QuickCheck GADTs" if you are interested in finding out more
+[^4]: Search for "QuickCheck GADTs" if you are interested in finding out more
     about this topic.
 
-[^4]: The Disruptor also comes in a multi-producer variant, see the following
+[^5]: The Disruptor also comes in a multi-producer variant, see the following
     [repository](https://github.com/stevana/pipelined-state-machines/tree/main/src/Disruptor/MP)
     for a Haskell version or the
     [LMAX](https://github.com/LMAX-Exchange/disruptor) repository for the
     original Java implementation.
 
-[^5]: See also [array of structures vs structure of
+[^6]: See also [array of structures vs structure of
     arrays](https://en.wikipedia.org/wiki/AoS_and_SoA) in other programming
     languages.
 
-[^6]: I'm not sure what the best way to fix this is, perhaps using the
+[^7]: I'm not sure what the best way to fix this is, perhaps using the
     constrained/restricted monad trick?
