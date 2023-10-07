@@ -107,11 +107,11 @@ to soon, and he also [said](https://youtu.be/OqsAGFExFgQ?t=2532) the following:
 > it's super fast, super efficient and obeys all the right properties to let this
 > stuff work really well."
 
-which together with Joe Armstrong's
+This quote together with Joe Armstrong's
 [anecdote](https://youtu.be/bo5WL5IQAd0?t=2494) of an unmodified Erlang program
-*only* running 33 times faster on a 64 core machine inspired me to think about
-how one can improve upon the already excellent work that Erlang is doing in this
-space.
+*only* running 33 times faster on a 64 core machine, rather than 64 times faster
+as per the Ericsson higher-up's expectations, inspired me to think about how one
+can improve upon the already excellent work that Erlang is doing in this space.
 
 Longer term, I like to think of pipelines spanning computers as a building block
 for what Barbara [calls](https://www.youtube.com/watch?v=8M0wTX6EOVI) a
@@ -179,7 +179,7 @@ Around the same time many (functional) programming languages started getting
 streaming libraries. Haskell's
 [conduit](https://hackage.haskell.org/package/conduit) library had its first
 release in 2011 and Haskell's [pipes](https://hackage.haskell.org/package/pipes)
-library came shortly after (2012) Java version 8, which has streams, was
+library came shortly after (2012). Java version 8, which has streams, was
 released in 2014. Both [Clojure](https://clojure.org/reference/transducers) and
 [Scala](https://doc.akka.io/docs/akka/current/stream/index.html), which also use
 the JVM, got streams that same year (2014).
@@ -204,10 +204,10 @@ While the Apache tools can often be deployed locally for testing purposes, they
 are intended for distributed computations and are therefore perhaps a bit more
 cumbersome to deploy and use than the streaming libraries we mentioned earlier.
 
-Initial it might not seem like a big deal that streaming libraries don't "scale
-up" or distributed over multiple computers, and that streaming tools like the
-Apache ones don't gracefully "scale down" to a single computer. Just pick the
-right tool for the right job, right? Well, it turns out that
+Initially it might not seem like a big deal that streaming libraries don't
+"scale up" or distributed over multiple computers, and that streaming tools like
+the Apache ones don't gracefully "scale down" to a single computer. Just pick
+the right tool for the right job, right? Well, it turns out that
 [40-80%](https://youtu.be/XPlXNUXmcgE?t=2783) of jobs submitted to MapReduce
 systems (such as Apache Hadoop) would run faster if they were ran on a single
 computer instead of a distributed cluster of computers.
@@ -240,15 +240,20 @@ has been done with hot code swapping in the FRP
 To summarise, while there are many streaming libraries there seem to be few (if
 any, at least that I know of) that tick all of the following boxes:
 
-  1. doing parallel processing (or if so, they don't do it deterministically or
-     without copying data nor sharding)
-  2. distributed, can seamlessly scale from single to multiple computers
-    + replication
-    + leader election
-  3. observability
-  4. declarative high-level way of expressing stream processing networks
-  5. elastic
-  6. Good deploy, upgrade, rescale story.
+  1. Parallel processing:
+    - in a determinate way;
+    - faning out and sharding without copying data (when run on a single
+      computer).
+  2. Potentially distributed over multiple computers, without the need to change
+     the code of the pipeline;
+  3. Observable, to ease debugging and performance analysis;
+  4. Declarative high-level way of expressing stream processing networks (i.e.
+     the pipeline);
+  5. Good deploy, upgrade, rescale story;
+  6. Elastic, i.e. ability to rescale automatically to meet the load.
+
+I think we need all of the above in order to build Barbara's "substrate for
+distributed systems".
 
 ## Plan
 
@@ -259,9 +264,9 @@ The purpose of this is to give us an easy to understand sequential specification
 of we would like our pipelines to do.
 
 We'll then give our first parallel implementation of pipelines using "normal"
-queues. The main point here is to recap of the problem that arises from using
-"normal" queues, but we'll also sketch how one can test the parallel
-implementation using the model.
+queues. The main point here is to recap of the problem with copying data that
+arises from using "normal" queues, but we'll also sketch how one can test the
+parallel implementation using the model.
 
 After that we'll have a look at the Disruptor API, sketch its single producer
 implementation and discuss how it helps solve the problems we identified in the
@@ -454,9 +459,7 @@ though, e.g. `prop_commute examplePipeline`.
 A bigger problem is that we've spawned two threads, when deploying `:&&&`, whose
 mere job is to copy elements from the input queue (`xs`) to the input queues of
 `f` and `g` (`xs{1,2}`), and from the outputs of `f` and `g` (`ys` and `zs`) to
-the output of `f &&& g` (`ysz`).
-
-Copying data is expensive and we also lost two threads in the process.
+the output of `f &&& g` (`ysz`). Copying data is expensive.
 
 This is pretty much where we left off in my previous post.
 
@@ -567,12 +570,17 @@ example = do
 See the `Disruptor` [module](src/Disruptor.hs) in case you are interested in the
 implementation details.
 
-* Why is disruptor performant?
-  - no copying when fanning out
-  - no allocation
-  - striding
-  - sharding (without copying)
-
+Hopefully by now we've seen enough internals to be able to explain why the
+Disruptor performs well. First of all, by using a ring buffer we only allocate
+memory when creating the ring buffer, it's then reused when we wrap around the
+ring. The ring buffer is implemented using an array, so the memory access
+patterns are predicatable and the CPU can do prefetching. The consumers don't
+have a copy of the data, they merely have a pointer (the sequence number) to how
+far in the producer's ring buffer they are, which allows for fanning out or
+sharding to multiple consumers without copying data. The fact that we can batch
+on both the write side (with `tryClaimBatch`) and on the reader side (with
+`waitFor`) also helps. All this taken together contributes to the Disruptor's
+performance.
 
 ## Disruptor pipeline deployment
 
