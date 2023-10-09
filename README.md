@@ -241,9 +241,9 @@ To summarise, while there are many streaming libraries there seem to be few (if
 any, at least that I know of) that tick all of the following boxes:
 
   1. Parallel processing:
-    - in a determinate way;
-    - faning out and sharding without copying data (when run on a single
-      computer).
+     * in a determinate way;
+     * faning out and sharding without copying data (when run on a single
+       computer).
   2. Potentially distributed over multiple computers, without the need to change
      the code of the pipeline;
   3. Observable, to ease debugging and performance analysis;
