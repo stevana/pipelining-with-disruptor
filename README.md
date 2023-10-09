@@ -130,7 +130,7 @@ Parallelism is a related problem, in that when one has big volumes of data it's
 also common to care about performance and how we can utilise multiple
 processors.
 
-Since dealing with limited memory and multi processors is a problem that as
+Since dealing with limited memory and multi-processors is a problem that as
 bothered programmers and computer scientists for a long time, at least since the
 1960s, there's a lot of work that has been done in this area. I'm at best
 familiar with a small fraction of this work, so please bear with me but also do
@@ -295,6 +295,7 @@ data P :: Type -> Type -> Type where
   (:&&&)  :: P a b -> P a c -> P a (b, c)
   (:+++)  :: P a c -> P b d -> P (Either a b) (Either c d)
   (:|||)  :: P a c -> P b c -> P (Either a b) c
+  Shard   :: P a b -> P a b
 ```
 
 Here's a pipeline that takes a stream of integers as input and outputs a stream
@@ -343,11 +344,13 @@ model (f :||| g) es =
     merge []             []       []       = []
     merge (Left  _ : es) (l : ls) rs       = l : merge es ls rs
     merge (Right _ : es) ls       (r : rs) = r : merge es ls rs
+model (Shard f) xs = model f xs
 ```
 
 Note that this semantics is completely sequential and perserves the order of the
-inputs (determinism). We'll introduce parallelism without breaking determinism
-in the next section.
+inputs (determinism). Also note that since we don't have parallelism yet,
+`Shard`ing doesn't do anything. We'll introduce parallelism without breaking
+determinism in the next section.
 
 We can now run our example pipeline in the REPL:
 
@@ -461,12 +464,86 @@ mere job is to copy elements from the input queue (`xs`) to the input queues of
 `f` and `g` (`xs{1,2}`), and from the outputs of `f` and `g` (`ys` and `zs`) to
 the output of `f &&& g` (`ysz`). Copying data is expensive.
 
+When we shard a pipeline we effectively clone it and send half of the traffic to
+one clone and the other half to the other. One way to achieve this is as
+follows, notice how in `shard` we swap `qEven` and `qOdd` when we recurse:
+
+```haskell
+deploy (Shard f) xs = do
+  xsEven <- newTQueueIO
+  xsOdd  <- newTQueueIO
+  _pid   <- forkIO (shard xs xsEven xsOdd)
+  ysEven <- deploy f xsEven
+  ysOdd  <- deploy f xsOdd
+  ys     <- newTQueueIO
+  _pid   <- forkIO (merge ysEven ysOdd ys)
+  return ys
+  where
+    shard :: TQueue a -> TQueue a -> TQueue a -> IO ()
+    shard  qIn qEven qOdd = do
+      atomically (readTQueue qIn >>= writeTQueue qEven)
+      shard qIn qOdd qEven
+
+    merge :: TQueue a -> TQueue a -> TQueue a -> IO ()
+    merge qEven qOdd qOut = do
+      atomically (readTQueue qEven >>= writeTQueue qOut)
+      merge qOdd qEven qOut
+```
+
+This alteration will shard the input queue (`qIn`) on even and odd indicies, and
+we can `merge` it back without losing determinism. Note that if we'd simply had
+a pool of worker threads taking items from the input queue and puttig them on
+the output queue (`qOut`) after processing, then we wouldn't have a
+deterministic outcome.
+
+* XXX: Generalise to MapM, move sleep example to here
+
+```haskell
+modelSleep :: P () ()
+modelSleep = Shard (MapM (const (threadDelay 250000)) :&&&
+                    MapM (const (threadDelay 250000)) :>>>
+                    MapM (const (threadDelay 250000)) :>>>
+                    MapM (const (threadDelay 250000)))
+
+runModelSleep :: IO ()
+runModelSleep = void (model modelSleep (replicate 5 ()))
+```
+
+```
+> :set +s
+> runModelSleep
+(5.02 secs, 905,480 bytes)
+```
+
+```haskell
+tBQueueSleep :: P () ()
+tBQueueSleep = MapM (const (threadDelay 250000)) :&&&
+               MapM (const (threadDelay 250000)) :>>>
+               MapM (const (threadDelay 250000)) :>>>
+               MapM (const (threadDelay 250000))
+```
+
+```
+> runTBQueueSleep
+(1.76 secs, 907,160 bytes)
+```
+
+```haskell
+tBQueueSleepSeq :: P () ()
+tBQueueSleepSeq =
+  MapM $ \() -> do
+    ()       <- threadDelay 250000
+    ((), ()) <- (,) <$> threadDelay 250000 <*> threadDelay 250000
+    ()       <- threadDelay 250000
+    return ()
+```
+
+```
+> runTBQueueSleepSeq
+(5.02 secs, 898,096 bytes)
+```
+
 This is pretty much where we left off in my previous post.
-
-We also had a look at how to shard inputs (for partitioned parallelism) as well
-made a simple benchmark to illustrate the speed ups we can get from pipelining.
-
-We'll not repeat those things here.
 
 ## Disruptor
 
@@ -649,57 +726,6 @@ data P :: Type -> Type -> Type where
   (:&&&) :: (HasRB b, HasRB c) => P a b -> P a c -> P a (b, c)
 ```
 
-While easy to do, we'll no longer be able to implement the `Arrow` instance[^7].
-
-## Example
-
-```haskell
-modelSleep :: P () ()
-modelSleep = Shard (MapM (const (threadDelay 250000)) :&&&
-                    MapM (const (threadDelay 250000)) :>>>
-                    MapM (const (threadDelay 250000)) :>>>
-                    MapM (const (threadDelay 250000)))
-
-runModelSleep :: IO ()
-runModelSleep = void (model modelSleep (replicate 5 ()))
-```
-
-```
-> :set +s
-> runModelSleep
-(5.02 secs, 905,480 bytes)
-```
-
-```haskell
-tBQueueSleep :: P () ()
-tBQueueSleep = MapM (const (threadDelay 250000)) :&&&
-               MapM (const (threadDelay 250000)) :>>>
-               MapM (const (threadDelay 250000)) :>>>
-               MapM (const (threadDelay 250000))
-```
-
-```
-> runTBQueueSleep
-(1.76 secs, 907,160 bytes)
-```
-
-```haskell
-tBQueueSleepSeq :: P () ()
-tBQueueSleepSeq =
-  MapM $ \() -> do
-    ()       <- threadDelay 250000
-    ((), ()) <- (,) <$> threadDelay 250000 <*> threadDelay 250000
-    ()       <- threadDelay 250000
-    return ()
-```
-
-```
-> runTBQueueSleepSeq
-(5.02 secs, 898,096 bytes)
-```
-
-## Sharding
-
 Sharding, or partition parallelism as Jim calls it, is a way to make a copy of a
 pipeline and divert half of the events to the first copy and the other half to
 the other copy. Assuming there are enough unused CPUs/core, this could
@@ -707,12 +733,11 @@ effectively double the throughput. It might be helpful to think of the events at
 even positions in the stream going to the first pipeline copy while the events
 in the odd positions in the stream go to the second copy of the pipeline.
 
-When we shard in the `TBQueue` deployment of pipelines we end up copying events
+When we shard in the `TQueue` deployment of pipelines we end up copying events
 from the original stream into the two pipeline copies. This is similar to
-copying when fanning out, which we discussed above, and the solution is
-similar.
+copying when fanning out, which we discussed above, and the solution is similar.
 
-First we
+* XXX:
 
 ```haskell
 Shard :: P a b -> P a (Sharded b)
@@ -740,7 +765,7 @@ readRingBufferRB (RBShard s1 s2 xs ys) i = do
   then coerce (readRingBufferRB xs i)
   else if partition i s2
        then coerce (readRingBufferRB ys i)
-       else error "tryRead, RBShard"
+       else error "readRingBufferRB: unreachable"
 ```
 
 ```haskell
@@ -790,6 +815,8 @@ tBQueueSleepSharded = Shard tBQueueSleep
 (1.26 secs, 920,888 bytes)
 ```
 
+* XXX: sharded disruptor?
+* memory consumption comparison?
 
 ## Observability
 
@@ -840,14 +867,18 @@ cabal build copying && \
   firefox copying.svg
 ```
 
-
 ## Further work
 
 * Avoid writing NoOutput
 * Actual Arrow instance
-* Does an `ArrowLoop` instance make sense?
-* Can we be avoid copying when using Either?
+
+* I believe the current pipeline combinator allow for arbitrary directed acyclic
+  graphs (DAGs), but what if feedback cycles are needed? Does an `ArrowLoop`
+  instance make sense in that case?
+
+* Can we be avoid copying when using `Either`?
 * More monitoring?
+* Use unboxed arrays for types that can be unboxed in the `HasRB` instances.
 * Actually test using `prop_commute`?
 * Ability to turn monitoring on and off at runtime
 * Deploy across network of computers
@@ -919,7 +950,7 @@ cabal build copying && \
     by spawning two threads. I don't understand where exactly this operator is
     used in the implementation, but if it's used everytime an element is
     processed (in parallel) then the overheard of spawning the threads could
-    significant?
+    be significant?
 
 [^3]: Even better would be if arrow notation worked for Cartesian categories.
     See Conal Elliott's work on [compiling to
