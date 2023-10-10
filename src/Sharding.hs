@@ -16,25 +16,25 @@ import Disruptor
 newtype Sharded a = Sharded a
   deriving Show
 
-data Sharding = Sharding
-  { sIndex :: Int
-  , sTotal :: Int
+data Partition = Partition
+  { pIndex :: Int
+  , pTotal :: Int
   }
   deriving Show
 
-noSharding :: Sharding
-noSharding = Sharding 0 1
+noPartition :: Partition
+noPartition = Partition 0 1
 
-addShard :: Sharding -> (Sharding, Sharding)
-addShard (Sharding i total) =
-  ( Sharding i (total * 2)
-  , Sharding (i + total) (total * 2)
+addPartition :: Partition -> (Partition, Partition)
+addPartition (Partition i total) =
+  ( Partition i (total * 2)
+  , Partition (i + total) (total * 2)
   )
 
-partition :: SequenceNumber -> Sharding -> Bool
-partition i (Sharding n total) = coerce i .&. (total - 1) == 0 + n
+partition :: SequenceNumber -> Partition -> Bool
+partition i (Partition n total) = coerce i .&. (total - 1) == 0 + n
 
-toListSharded_ :: forall a. RingBuffer a -> Sharding -> IO [a]
+toListSharded_ :: forall a. RingBuffer a -> Partition -> IO [a]
 toListSharded_ rb s = do
   produced <- readCursor rb
   if coerce produced < capacity rb - 1

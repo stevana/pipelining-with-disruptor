@@ -63,10 +63,10 @@ class HasRB a where
   tryRead       :: RB a -> SequenceNumber -> IO a
   addConsumer   :: RB a -> IO Counter
   toList        :: RB a -> IO [a]
-  toListSharded :: RB a -> Sharding -> IO [a]
+  toListSharded :: RB a -> Partition -> IO [a]
 
 instance HasRB a => HasRB (Sharded a) where
-  data RB (Sharded a) = RBShard [Label] Sharding Sharding (RB a) (RB a)
+  data RB (Sharded a) = RBShard [Label] Partition Partition (RB a) (RB a)
   new l n = error "new, RBShard: shouldn't be created explicitly"
   cursor (RBShard _l _s1 _s2 xs ys) = cursor xs `combineCounters` cursor ys
   label (RBShard  l _s1 _s2 _xs _ys) = l
@@ -82,12 +82,10 @@ instance HasRB a => HasRB (Sharded a) where
     else if partition i s2
          then waitFor ys i
          else error "waitFor, RBShard"
-  tryRead (RBShard _l s1 s2 xs ys) i = do
-    if partition i s1
-    then coerce (tryRead xs i)
-    else if partition i s2
-         then coerce (tryRead ys i)
-         else error "tryRead, RBShard"
+  tryRead (RBShard _l s1 s2 xs ys) i
+    | partition i s1 = coerce (tryRead xs i)
+    | partition i s2 = coerce (tryRead ys i)
+    | otherwise = error "tryRead, RBShard"
   write (RBShard _l s1 s2 xs ys) i x = do
     undefined
     -- write xs i x
@@ -294,6 +292,7 @@ instance HasRB Int where
   {-# INLINE toList #-}
 
 -- XXX: Use unboxed array?
+-- https://hackage.haskell.org/package/vector-0.13.0.0/docs/src/Data.Vector.Unboxed.Base.html#MV_Unit
 instance HasRB () where
   data RB ()               = RBUnit [Label] (RingBuffer ())
   new l n ws               = RBUnit [l] <$> Disruptor.newRingBuffer_ n ws

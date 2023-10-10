@@ -26,7 +26,7 @@ import Sharding
 ------------------------------------------------------------------------
 
 data Node
-  = forall a. (HasRB a, Show a) => RingBufferNode Label Sharding (RB a)
+  = forall a. (HasRB a, Show a) => RingBufferNode Label Partition (RB a)
   | WorkerNode Label Counter
   | SourceOrSinkNode Label
   | ProducerNode Label
@@ -59,7 +59,7 @@ addSourceOrSinkNode g l = modifyIORef' (gNodes g) (SourceOrSinkNode l :)
 addProducerNode :: Graph -> Label -> IO ()
 addProducerNode g l = modifyIORef' (gNodes g) (ProducerNode l :)
 
-addRingBufferNode :: (HasRB a, Show a) => Graph -> Label -> Sharding -> RB a -> IO ()
+addRingBufferNode :: (HasRB a, Show a) => Graph -> Label -> Partition -> RB a -> IO ()
 addRingBufferNode g l s rb = modifyIORef' (gNodes g) (RingBufferNode l s rb :)
 
 addEdge :: Graph -> Edge -> IO ()

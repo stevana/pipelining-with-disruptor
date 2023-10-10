@@ -19,12 +19,7 @@ qUEUE_SIZE = 2^16
 deploy :: P a b -> TBQueue a -> IO (TBQueue b)
 deploy Id         xs = return xs
 deploy (f :>>> g) xs = deploy g =<< deploy f xs
-deploy (Map f)   xs = do
-  ys <- newTBQueueIO qUEUE_SIZE
-  _pid <- forkIO $ forever $ do
-    x <- atomically (readTBQueue xs)
-    atomically (writeTBQueue ys (f x))
-  return ys
+deploy (Map f)    xs = deploy (MapM (return . f)) xs
 deploy (MapM f)   xs = do
   ys <- newTBQueueIO qUEUE_SIZE
   _pid <- forkIO $ forever $ do
@@ -89,22 +84,22 @@ prop_commute p xs = do
 
 ------------------------------------------------------------------------
 
-tBQueueSleepSeq :: P () ()
-tBQueueSleepSeq =
+queueSleepSeq :: P () ()
+queueSleepSeq =
   MapM $ \() -> do
     ()       <- threadDelay 250000
     ((), ()) <- (,) <$> threadDelay 250000 <*> threadDelay 250000
     ()       <- threadDelay 250000
     return ()
 
-tBQueueSleep :: P () ()
-tBQueueSleep = MapM (const (threadDelay 250000)) :&&&
-               MapM (const (threadDelay 250000)) :>>>
-               MapM (const (threadDelay 250000)) :>>>
-               MapM (const (threadDelay 250000))
+queueSleep :: P () ()
+queueSleep =
+  MapM (const (threadDelay 250000)) :&&& MapM (const (threadDelay 250000)) :>>>
+  MapM (const (threadDelay 250000)) :>>>
+  MapM (const (threadDelay 250000))
 
-tBQueueSleepSharded :: P () ()
-tBQueueSleepSharded = Shard tBQueueSleep
+queueSleepSharded :: P () ()
+queueSleepSharded = Shard queueSleep
 
 runP :: P a b -> [a] -> IO [b]
 runP p xs0 = do
@@ -114,14 +109,14 @@ runP p xs0 = do
   replicateM (length xs0) (atomically (readTBQueue ys))
     `finally` killThread pid
 
-runTBQueueSleepSeq :: IO ()
-runTBQueueSleepSeq = void (runP tBQueueSleepSeq (replicate 5 ()))
+runQueueSleepSeq :: IO ()
+runQueueSleepSeq = void (runP queueSleepSeq (replicate 5 ()))
 
-runTBQueueSleep :: IO ()
-runTBQueueSleep = void (runP tBQueueSleep (replicate 5 ()))
+runQueueSleep :: IO ()
+runQueueSleep = void (runP queueSleep (replicate 5 ()))
 
-runTBQueueSleepSharded :: IO ()
-runTBQueueSleepSharded = void (runP tBQueueSleepSharded (replicate 5 ()))
+runQueueSleepSharded :: IO ()
+runQueueSleepSharded = void (runP queueSleepSharded (replicate 5 ()))
 
 copyP :: P () ()
 copyP =

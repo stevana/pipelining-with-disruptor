@@ -76,7 +76,7 @@ data P a b where
 
 data DeployEnv = DeployEnv
   { deGraph     :: Graph
-  , deSharding  :: Sharding
+  , dePartition :: Partition
   , deThreadIds :: IORef [ThreadId]
   , deCPUMap    :: Map Label Int
   }
@@ -101,7 +101,7 @@ deploy (p :&&& q) e xs = do
 deploy (Transform l f) e xs = deploy (TransformM l (return . f)) e xs
 deploy (TransformM l f) e xs = do
   ys <- new (l <> "_RB") rB_SIZE rB_WAIT_STRATEGY
-  addRingBufferNode (deGraph e) (l <> "_RB") (deSharding e) ys
+  addRingBufferNode (deGraph e) (l <> "_RB") (dePartition e) ys
   addConsumers (deGraph e) (label xs) l
   c <- addConsumer xs
   addWorkerNode (deGraph e) l c
@@ -114,7 +114,7 @@ deploy (TransformM l f) e xs = do
     -- putStrLn (unLabel l ++ ", waitFor: " ++ show consumed)
     produced <- waitFor xs consumed
     Disruptor.iter consumed produced $ \i ->
-      when (partition i (deSharding e)) $ do
+      when (partition i (dePartition e)) $ do
         x <- tryRead xs i
         -- XXX: For debugging:
         -- delay <- randomRIO (50000, 300000)
@@ -138,7 +138,7 @@ deploy (TransformM l f) e xs = do
 deploy (Fold l f s00) e xs = do
   ys <- new (l <> "_RB") rB_SIZE rB_WAIT_STRATEGY
   let g  = deGraph e
-  addRingBufferNode g (l <> "_RB") (deSharding e) ys
+  addRingBufferNode g (l <> "_RB") (dePartition e) ys
   addConsumers g (label xs) l
   addProducers g l (label ys)
   c <- addConsumer xs
@@ -147,7 +147,7 @@ deploy (Fold l f s00) e xs = do
         consumed <- readCounter c
         produced <- waitFor xs consumed
         s' <- Disruptor.fold consumed produced s0 $ \i s -> do
-          if partition i (deSharding e)
+          if partition i (dePartition e)
           then do
             x <- tryRead xs i
             let (s', y) = f x s
@@ -168,9 +168,9 @@ deploy (_ :||| _) _e _ = undefined
 deploy (Fork _)   _e _ = undefined
 deploy (Shard p) e xs  = do
   let p' = appendPrimeToLabels p
-  let (s1, s2) = addShard (deSharding e)
-  ys1 <- deploy p' (e { deSharding = s1 }) xs
-  ys2 <- deploy p' (e { deSharding = s2 }) xs
+  let (s1, s2) = addPartition (dePartition e)
+  ys1 <- deploy p' (e { dePartition = s1 }) xs
+  ys2 <- deploy p' (e { dePartition = s2 }) xs
   return (RBShard (label ys1 ++ label ys2) s1 s2 ys1 ys2)
 {-# INLINE deploy #-}
 
@@ -204,7 +204,7 @@ setupSource l src = do
   addProducerNode g "source"
   addProducers g l ["source"]
   addProducers g "source" ["source_RB"]
-  addRingBufferNode g "source_RB" noSharding xs
+  addRingBufferNode g "source_RB" noPartition xs
   stop <- newIORef (-1)
   pid <- forkIO (src xs stop)
   return (SourceSetup xs g pid stop)
@@ -272,7 +272,7 @@ flowBracket p srcLabel src snkLabel sink enableMetrics = do
   SourceSetup xs g sourcePid stop <- setupSource srcLabel src
   threadIds <- newIORef []
   -- XXX: don't hardcode topology...
-  let deployEnv = DeployEnv g noSharding threadIds (Map.fromList [("sleep1", 2), ("sleep2", 3), ("sleep3", 4), ("sleep4", 5)])
+  let deployEnv = DeployEnv g noPartition threadIds (Map.fromList [("sleep1", 2), ("sleep2", 3), ("sleep3", 4), ("sleep4", 5)])
   ys <- deploy p deployEnv xs
   MetricsSetup dir metricsPid <- setupMetrics enableMetrics g stop
   SinkSetup runSink <- setupSink snkLabel ys g stop sink

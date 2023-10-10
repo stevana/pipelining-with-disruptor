@@ -399,11 +399,12 @@ We can achieve this as follows:
 deploy :: P a b -> TQueue a -> IO (TQueue b)
 deploy Id         xs = return xs
 deploy (f :>>> g) xs = deploy g =<< deploy f xs
-deploy (Map f)    xs = do
+deploy (Map f)    xs = deploy (MapM (return . f)) xs
+deploy (MapM f)   xs = do
   ys <- newTQueueIO
   forkIO $ forever $ do
     x <- atomically (readTQueue xs)
-    let y = f x
+    y <- f x
     atomically (writeTQueue ys y)
   return ys
 deploy (f :&&& g) xs = do
@@ -496,18 +497,28 @@ a pool of worker threads taking items from the input queue and puttig them on
 the output queue (`qOut`) after processing, then we wouldn't have a
 deterministic outcome.
 
-* XXX: Generalise to MapM, move sleep example to here
+Let's have a look at a couple of examples. If we generalise `Map` to `MapM` in
+our model we can write the following program:
 
 ```haskell
 modelSleep :: P () ()
-modelSleep = Shard (MapM (const (threadDelay 250000)) :&&&
-                    MapM (const (threadDelay 250000)) :>>>
-                    MapM (const (threadDelay 250000)) :>>>
-                    MapM (const (threadDelay 250000)))
+modelSleep =
+  MapM (const (threadDelay 250000)) :&&& MapM (const (threadDelay 250000)) :>>>
+  MapM (const (threadDelay 250000)) :>>>
+  MapM (const (threadDelay 250000))
+```
 
+The argument to `threadDelay` (or sleep) is microseconds, so at each point in
+the pipeline we are sleeping 1/4 of a second.
+
+If we feed this pipeline `5` items:
+
+```haskell
 runModelSleep :: IO ()
 runModelSleep = void (model modelSleep (replicate 5 ()))
 ```
+
+We see that it takes roughly 5 seconds:
 
 ```
 > :set +s
@@ -515,22 +526,26 @@ runModelSleep = void (model modelSleep (replicate 5 ()))
 (5.02 secs, 905,480 bytes)
 ```
 
-```haskell
-tBQueueSleep :: P () ()
-tBQueueSleep = MapM (const (threadDelay 250000)) :&&&
-               MapM (const (threadDelay 250000)) :>>>
-               MapM (const (threadDelay 250000)) :>>>
-               MapM (const (threadDelay 250000))
-```
+This is expected, even though we pipeline and fanout, as the model is completely
+sequential.
+
+If we instead run the same pipeline using the queue deployment, we get:
 
 ```
-> runTBQueueSleep
+> runQueueSleep
 (1.76 secs, 907,160 bytes)
 ```
 
+The reason for this is that the two sleeps in the fanout happen in parallel now
+and when the first item is at the second stage the first stage starts processing
+the second item, and so on, i.e. we get a pipelining parallelism.
+
+If we wanted to achieve a sequential running time using the queue deployment,
+we'd have to write a one stage pipeline like so:
+
 ```haskell
-tBQueueSleepSeq :: P () ()
-tBQueueSleepSeq =
+queueSleepSeq :: P () ()
+queueSleepSeq =
   MapM $ \() -> do
     ()       <- threadDelay 250000
     ((), ()) <- (,) <$> threadDelay 250000 <*> threadDelay 250000
@@ -539,11 +554,25 @@ tBQueueSleepSeq =
 ```
 
 ```
-> runTBQueueSleepSeq
+> runQueueSleepSeq
 (5.02 secs, 898,096 bytes)
 ```
 
-This is pretty much where we left off in my previous post.
+Using sharding we can get an even faster running time:
+
+```haskell
+queueSleepSharded :: P () ()
+queueSleepSharded = Shard queueSleep
+```
+
+```
+> runQueueSleepSharded
+(1.26 secs, 920,888 bytes)
+```
+
+This is pretty much where we left off in my previous post. If the speed ups we
+are seeing from pipelining don't make sense, it might help to go back and reread
+the old post, as I spent some more time constructing an intuitive example there.
 
 ## Disruptor
 
@@ -737,85 +766,127 @@ When we shard in the `TQueue` deployment of pipelines we end up copying events
 from the original stream into the two pipeline copies. This is similar to
 copying when fanning out, which we discussed above, and the solution is similar.
 
-* XXX:
+First we need to extend the pipeline type with a new shard constructor whose
+output type is `Sharded`.
 
 ```haskell
-Shard :: P a b -> P a (Sharded b)
+data P :: Type -> Type -> Type where
+  ...
+  Shard :: P a b -> P a (Sharded b)
 ```
+
+This type is in fact merely the identity type:
 
 ```haskell
 newtype Sharded a = Sharded a
 ```
 
-```haskell
-data RB (Sharded a) = RBShard Sharding Sharding (RB a) (RB a)
-```
+But it allows us to define a `HasRB` instance which does the sharding without
+copying as follows:
 
 ```haskell
-deploy (Shard p) s xs = do
-  let (s1, s2) = addShard s
-  ys1 <- deploy p s1 xs
-  ys2 <- deploy p s2 xs
-  return (RBShard s1 s2 ys1 ys2)
+instance HashRB a => HasRB (Sharded a) where
+  data RB (Sharded a) = RBShard Partition Partition (RB a) (RB a)
+  readRingBufferRB (RBShard p1 p2 xs ys) i
+    | partition i p1 = readRingBufferRB xs i
+    | partition i p2 = readRingBufferRB ys i
+  ...
 ```
 
-```haskell
-readRingBufferRB (RBShard s1 s2 xs ys) i = do
-  if partition i s1
-  then coerce (readRingBufferRB xs i)
-  else if partition i s2
-       then coerce (readRingBufferRB ys i)
-       else error "readRingBufferRB: unreachable"
-```
+The idea being that we split the ring buffer into two, like when fanning out,
+and then we have a way of taking an index and figuring out which of the two ring
+buffers it's actually in.
+
+This partitioning information is threaded though while deploying:
 
 ```haskell
-data Sharding = Sharding
-  { sIndex :: Int
-  , sTotal :: Int
+deploy (Shard f) p xs = do
+  let (p1, p2) = addPartition p
+  ys1 <- deploy f p1 xs
+  ys2 <- deploy f p2 xs
+  return (RBShard p1 p2 ys1 ys2)
+```
+
+The partitioning information consists of the total number of partitions and the
+index of the current partition.
+
+```haskell
+data Partition = Partition
+  { pIndex :: Int
+  , pTotal :: Int
   }
-  deriving Show
 ```
+
+So no partitioning is represented as follows:
 
 ```haskell
-noSharding :: Sharding
-noSharding = Sharding 0 1
-
-addShard :: Sharding -> (Sharding, Sharding)
-addShard (Sharding i total) =
-  ( Sharding i (total * 2)
-  , Sharding (i + total) (total * 2)
-  )
-
-partition :: SequenceNumber -> Sharding -> Bool
-partition i (Sharding n total) = coerce i .&. (total - 1) == 0 + n
+noPartition :: Partition
+noPartition = Partition 0 1
 ```
 
- We can partition on even or odd indices as follows: `even(i) := i % 2 == 0 + 0`
-and `odd(i) := i % 2 == 0 + 1`. Written this way we can easier see how to
-generalise to `N` partitions: `partition(n, i) := i % N == 0 + n`. So for `N =
-2` then `partition(0) == even` while `partition(1) == odd`. Since sharding and
-sharding a shard, etc always introduce a power of two we can further optimise to
-use bitwise or as follows: `partition(n, i) := i | (N - 1) == 0 + n` thereby
-avoiding the expensive modulus computation. This is a trick used in Disruptor as
-well, and the reason why the capacity of a Disruptor always needs to be a power
-of two.
+While creating a new partition is done as follows:
+
+```haskell
+addPartition :: Partition -> (Partition, Partition)
+addPartition (Partition i total) =
+  ( Partition i (total * 2)
+  , Partition (i + total) (total * 2)
+  )
+```
+
+So, for example, if we partition twice we get:
+
+```
+> let (p1, p2) = addPartition noPartition in (addPartition p1, addPartition p2)
+((Partition 0 4, Partition 2 4), (Partition 1 4, Partition 3 4))
+```
+
+From this information we can compute if an index is in an partition or not as
+follows:
+
+```haskell
+partition :: SequenceNumber -> Partition -> Bool
+partition i (Partition n total) = i `mod` total == 0 + n
+```
+
+To understand why this works, it might be helpful to consider the case where we
+only have two partitions. We can partition on even or odd indices as follows:
+`even i = i ``mod`` 2 == 0 + 0` and `odd i = i ``mod`` 2 == 0 + 1`. Written this
+way we can easier see how to generalise to `total` partitions: `partition i
+(Partition n total) = i ``mod`` total == 0 + n`. So for `total = 2` then
+`partition i (Partition 0 2) == even` while `partition i (Partition 1 2) ==
+odd`.
+
+Since partitioning and partitioning a partition, etc always introduce a power of
+two we can further optimise to use bitwise or as follows: `partition i
+(Partition n total) := i .|. (total - 1) == 0 + n` thereby avoiding the
+expensive modulus computation. This is a trick used in Disruptor as well, and
+the reason why the capacity of a Disruptor always needs to be a power of two.
 
 See the `HasRB (Sharded a)` instance in the following
 [module](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/RingBufferClass.hs)
 for the details.
 
+XXX:
+
+```
+> runDisruptorSleep False
+(2.01 secs, 383,489,976 bytes)
+
+> runDisruptorSleepSharded False
+(1.37 secs, 286,207,264 bytes)
+```
 
 ```haskell
-tBQueueSleepSharded :: P () ()
-tBQueueSleepSharded = Shard tBQueueSleep
+copyP :: P () ()
+copyP =
+  Id :&&& Id :&&& Id :&&& Id :&&& Id
+  :>>> Map (const ())
+
+copyPSharded :: P () ()
+copyPSharded = Shard copyP
 ```
 
-```
-> runTBQueueSleepSharded
-(1.26 secs, 920,888 bytes)
-```
-
-* XXX: sharded disruptor?
 * memory consumption comparison?
 
 ## Observability
@@ -830,8 +901,9 @@ of how many elements they have consumed, we can annotate our deployment
 visualisation with this data and get a good idea of the progress the pipeline is
 making over time as well as spot potential bottlenecks.
 
-Here's an example of such an visualisation, for a wordcount pipeline, as an
-interactive SVG (you need to click on the image):
+Here's an example of such an visualisation, for a
+[word count](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/LibMain/WordCount.hs)
+pipeline, as an interactive SVG (you need to click on the image):
 
 [![Demo](https://stevana.github.io/svg-viewer-in-svg/wordcount-pipeline.svg)](https://stevana.github.io/svg-viewer-in-svg/wordcount-pipeline.svg)
 
@@ -895,33 +967,33 @@ cabal build copying && \
 
 * Guy Steele's talk [How to Think about Parallel Programming:
   Not!](https://www.infoq.com/presentations/Thinking-Parallel-Programming/)
-
-* Mike Barker's [bruteforce solution to Guy's problem and
-  benchmarks](https://github.com/mikeb01/folklore/tree/master/src/main/java/performance)
-
+  (2011);
 * [Understanding the Disruptor, a Beginner's Guide to Hardcore
   Concurrency](https://youtube.com/watch?v=DCdGlxBbKU4) by Trisha Gee and Mike
-  Barker (2011)
-
-* https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/
-
+  Barker (2011);
+* Mike Barker's [bruteforce solution to Guy's problem and
+  benchmarks](https://github.com/mikeb01/folklore/tree/master/src/main/java/performance);
+* [Streaming 101: The world beyond
+  batch](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/)
+  (2015);
+* [Streaming 102: The world beyond
+  batch](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-102/)
+  (2016);
 * [*SEDA: An Architecture for Well-Conditioned Scalable Internet
   Services*](https://people.eecs.berkeley.edu/~brewer/papers/SEDA-sosp.pdf)
-
-* Apache Beam -- windowing
-
-* Microsoft Naiad -- stage notifications
-
+  (2001);
+* [Microsoft
+  Naiad](https://www.microsoft.com/en-us/research/publication/naiad-a-timely-dataflow-system-2/):
+  a timely dataflow system (with stage notifications) (2013);
 * Elixir's ALF flow-based programming
-  [library](https://www.youtube.com/watch?v=2XrYd1W5GLo)
-
+  [library](https://www.youtube.com/watch?v=2XrYd1W5GLo) (2021);
 * [How fast are Linux pipes anyway?](https://mazzo.li/posts/fast-pipes.html)
-  (2022)
-
-* [netmap](https://man.freebsd.org/cgi/man.cgi?query=netmap&sektion=4) -- a framework for fast packet I/O
-
+  (2022);
+* [netmap](https://man.freebsd.org/cgi/man.cgi?query=netmap&sektion=4): a
+  framework for fast packet I/O;
 * [The output of Linux pipes can be
   indeterministic](https://www.gibney.org/the_output_of_linux_pipes_can_be_indeter)
+  (2019).
 
 
 [^1]: I noticed that the Wikipedia page for [dataflow
