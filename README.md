@@ -907,7 +907,7 @@ sys     0m1.452s
 While the same setup but using the Disruptor deployment gives us:
 
 ```
-6,660,819,256 bytes allocated in the heap
+  6,660,819,256 bytes allocated in the heap
      94,747,488 bytes copied during GC
       3,521,408 bytes maximum residency (15 sample(s))
       4,935,376 bytes maximum slop
@@ -950,7 +950,7 @@ sys     0m0.425s
 ```
 
 Total memory usage and processing time doubles in the queue case while it stays
-constant in the Disrutor case.
+constant in the Disrutor case[^8].
 
 ## Observability
 
@@ -990,42 +990,78 @@ as follows.
 
 ```bash
 cat data/test.txt | cabal run uppercase
-cat data/test.txt | cabal run wc
+cat data/test.txt | cabal run wc # word count
 ```
+
+The different copying benchmarks can be reproduced as follows (it takes a bit of
+time to run the first two of these):
 
 ```bash
-cabal build copying && \
-  time cabal run copying -- --no-sharding && \
-  eventlog2html copying.eventlog && \
-  ghc-prof-flamegraph copying.prof
-  firefox copying.eventlog.html
-  firefox copying.svg
+for flag in "--tbqueue-no-sharding" \
+            "--tbqueue-copy10" \
+            "--no-sharding" \
+            "--copy10"; do
+  cabal build copying && \
+    time cabal run copying -- "$flag" && \
+    eventlog2html copying.eventlog && \
+    ghc-prof-flamegraph copying.prof && \
+    firefox copying.eventlog.html && \
+    firefox copying.svg
+done
 ```
 
-## Further work
+## Further work / contributing
 
-* HasRB instances are incomplete
-* Avoid writing NoOutput
-* Actual Arrow instance
+There's still a lot to do, but I thought it would be a good place to stop for
+now. Here are a bunch of improvements, in no particular order:
 
-* I believe the current pipeline combinator allow for arbitrary directed acyclic
-  graphs (DAGs), but what if feedback cycles are needed? Does an `ArrowLoop`
-  instance make sense in that case?
+- [ ] Implement the `Arrow` instance for Disruptor `P`ipelines, this isn't as
+      straight forward as in the model case, because the combinators are litered
+      with `HasRB` constraints. Take inspriation from constrained/restriced
+      monads?
+- [ ] I believe the current pipeline combinator allow for arbitrary directed
+      acyclic graphs (DAGs), but what if feedback cycles are needed? Does an
+      `ArrowLoop` instance make sense in that case?
+- [ ] Can we be avoid copying when using `Either`, e.g. can we store all `Left`s
+      in one ring buffer and all `Right`s in an other?
+- [ ] Use unboxed arrays for types that can be unboxed in the `HasRB` instances?
+- [ ] In the word count example we get an input stream of lines, but we only
+      want to produce a single line as output when we reach the end of the input
+      stream. In order to do this I added a way for workers to say that
+      `NoOutput` was produced in one step. Currently that constructor still gets
+      written to the output Disruptor, would it be possible to not write it but
+      still increment the sequence number counter?
+- [ ] Add more monitoring? Currently we only keep track of the queue length,
+      i.e. saturation. Adding service time, i.e. how long it takes to process an
+      item, per worker shouldn't be hard. Latency (how long an item has been
+      waiting in the queue) would be more tricky as we'd need to annotate and
+      propagate a timestamp with the item?
+- [ ] Since monitoring adds a bit of overheard, it would be neat to be able to
+      turn monitoring on and off at runtime;
+- [ ] The `HasRB` instances are incomplete, and it's not clear if they need to
+      be completed? More testing and examples could help answer this question,
+      or perhaps a better visualisation?
+- [ ] Actually test using `prop_commute` partially applied to a concrete
+      pipeline?
+- [ ] Implement a property-based testing generator for pipelines and test using
+      `prop_commute` using random pipelines?
+- [ ] Add network/http source and sink?
+- [ ] Deploy across network of computers?
+- [ ] Hot-code upgrades of workers/stages with zero downtime, perhaps continuing
+      on my earlier
+      [attempt](https://github.com/stevana/hot-swapping-state-machines)?
+- [ ] In addition to upgrading the workers/stages, one might also want to rewire
+      the pipeline itself. Doug made me aware of an old
+      [paper](https://inria.hal.science/inria-00306565) by Gilles Kahn and David
+      MacQueen (1976), where they reconfigure their network on the fly. Perhaps
+      some ideas can be stole from there?
+- [ ] Related to reconfiguring is to be able shard/scale/reroute pipelines and
+      add more machines without downtime. Can we do this automatically based on
+      our monitoring? Perhaps building upon my earlier
+      [attempt](https://github.com/stevana/elastically-scalable-thread-pools)?
+- [ ] More benchmarks, and get to the bottom of footnote[^8].
 
-* Can we be avoid copying when using `Either`?
-* More monitoring?
-* Use unboxed arrays for types that can be unboxed in the `HasRB` instances.
-* Actually test using `prop_commute`?
-* Ability to turn monitoring on and off at runtime
-* Deploy across network of computers
-* Hot-code upgrades of workers/stages with zero downtime
-* Reconfiguration, [Coroutines and Networks of Parallel
-  Processes](https://inria.hal.science/inria-00306565) by Gilles Kahn and David
-  MacQueen (1976)
-* Shard/scale/reroute pipelines and add more machines without downtime
-  - auto scaling thread pools, https://github.com/stevana/elastically-scalable-thread-pools
-* Generator for pipelines
-* Benchmarks
+If any of this seems interesting, feel free to get involved.
 
 ## See also
 
@@ -1111,3 +1147,6 @@ cabal build copying && \
 
 [^7]: I'm not sure what the best way to fix this is, perhaps using the
     constrained/restricted monad trick?
+
+[^8]: I'm not sure why "bytes allocated in the heap" has doubled in both cases
+    though?
