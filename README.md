@@ -851,15 +851,15 @@ partition i (Partition n total) = i `mod` total == 0 + n
 
 To understand why this works, it might be helpful to consider the case where we
 only have two partitions. We can partition on even or odd indices as follows:
-`even i = i ``mod`` 2 == 0 + 0` and `odd i = i ``mod`` 2 == 0 + 1`. Written this
-way we can easier see how to generalise to `total` partitions: `partition i
-(Partition n total) = i ``mod`` total == 0 + n`. So for `total = 2` then
+``even i = i `mod` 2 == 0 + 0`` and ``odd i = i `mod` 2 == 0 + 1``. Written this
+way we can easier see how to generalise to `total` partitions: ``partition i
+(Partition n total) = i `mod` total == 0 + n``. So for `total = 2` then
 `partition i (Partition 0 2) == even` while `partition i (Partition 1 2) ==
 odd`.
 
 Since partitioning and partitioning a partition, etc always introduce a power of
 two we can further optimise to use bitwise or as follows: `partition i
-(Partition n total) := i .|. (total - 1) == 0 + n` thereby avoiding the
+(Partition n total) = i .|. (total - 1) == 0 + n` thereby avoiding the
 expensive modulus computation. This is a trick used in Disruptor as well, and
 the reason why the capacity of a Disruptor always needs to be a power of two.
 
@@ -1018,7 +1018,7 @@ now. Here are a bunch of improvements, in no particular order:
 - [ ] Implement the `Arrow` instance for Disruptor `P`ipelines, this isn't as
       straight forward as in the model case, because the combinators are litered
       with `HasRB` constraints. Take inspriation from constrained/restriced
-      monads?
+      monads? This would allow us to specify pipelines using the arrow syntax.
 - [ ] I believe the current pipeline combinator allow for arbitrary directed
       acyclic graphs (DAGs), but what if feedback cycles are needed? Does an
       `ArrowLoop` instance make sense in that case?
