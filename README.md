@@ -920,6 +920,38 @@ sys     0m0.674s
 
 So about an order of magnitude less memory usage and execution time.
 
+If we double the fanout factor from five to ten, we get the following stats with
+the queue deployment:
+
+```
+ 36,895,968,096 bytes allocated in the heap
+189,375,122,768 bytes copied during GC
+  2,164,064,704 bytes maximum residency (182 sample(s))
+      8,281,624 bytes maximum slop
+           4291 MiB total memory in use (0 MB lost due to fragmentation)
+
+real    2m28.319s
+user    4m12.422s
+sys     0m2.055s
+```
+
+and the following for the Disruptor deployment:
+
+```
+11,419,407,128 bytes allocated in the heap
+   181,556,784 bytes copied during GC
+     6,306,712 bytes maximum residency (22 sample(s))
+     4,664,784 bytes maximum slop
+           216 MiB total memory in use (0 MB lost due to fragmentation)
+
+real    0m5.527s
+user    0m7.056s
+sys     0m0.425s
+```
+
+Total memory usage and processing time doubles in the queue case while it stays
+constant in the Disrutor case.
+
 ## Observability
 
 Given that pipelines are directed acyclic graphs and that we have a concrete

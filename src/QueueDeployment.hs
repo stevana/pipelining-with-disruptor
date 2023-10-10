@@ -123,11 +123,26 @@ copyP =
   Id :&&& Id :&&& Id :&&& Id :&&& Id
   :>>> Map (const ())
 
+copy10P :: P () ()
+copy10P =
+  Id :&&& Id :&&& Id :&&& Id :&&& Id :&&&
+  Id :&&& Id :&&& Id :&&& Id :&&& Id
+  :>>> Map (const ())
+
 copyPSharded :: P () ()
 copyPSharded = Shard copyP
 
-runTBQueueCopying :: Int -> IO ()
-runTBQueueCopying n = void (runP copyP (replicate n ()))
+noCopyP :: P () ()
+noCopyP = Map (const ())
 
-runTBQueueCopyingSharded :: Int -> IO ()
-runTBQueueCopyingSharded n = void (runP copyPSharded (replicate n ()))
+runQueueCopying :: Int -> IO ()
+runQueueCopying n = void (runP copyP (replicate n ()))
+
+runQueueCopyingSharded :: Int -> IO ()
+runQueueCopyingSharded n = void (runP copyPSharded (replicate n ()))
+
+runQueueNoCopying :: Int -> IO ()
+runQueueNoCopying n = void (runP noCopyP (replicate n ()))
+
+runQueueCopying10 :: Int -> IO ()
+runQueueCopying10 n = void (runP copy10P (replicate n ()))
