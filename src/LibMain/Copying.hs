@@ -1,3 +1,4 @@
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module LibMain.Copying where
@@ -11,7 +12,7 @@ import QueueDeployment (runTBQueueCopying, runTBQueueCopyingSharded)
 ------------------------------------------------------------------------
 
 iTERATIONS :: Int
-iTERATIONS = 50000000
+iTERATIONS = 5_000_000
 
 ------------------------------------------------------------------------
 

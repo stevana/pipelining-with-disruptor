@@ -817,7 +817,7 @@ data Partition = Partition
   }
 ```
 
-So no partitioning is represented as follows:
+No partitioning is represented as follows:
 
 ```haskell
 noPartition :: Partition
@@ -867,7 +867,8 @@ See the `HasRB (Sharded a)` instance in the following
 [module](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/RingBufferClass.hs)
 for the details.
 
-XXX:
+If we run our sleep pipeline from before using the Disruptor deployment we get
+similar timings as with the queue deployment:
 
 ```
 > runDisruptorSleep False
@@ -877,17 +878,47 @@ XXX:
 (1.37 secs, 286,207,264 bytes)
 ```
 
+In order to get a better understanding of how not copying when fanning out and
+sharding improves performance, let's instead have a look at this pipeline which
+fans out five times:
+
 ```haskell
 copyP :: P () ()
 copyP =
   Id :&&& Id :&&& Id :&&& Id :&&& Id
   :>>> Map (const ())
-
-copyPSharded :: P () ()
-copyPSharded = Shard copyP
 ```
 
-* memory consumption comparison?
+If we deploy this pipeline using queues and feed it five million items we get
+the following statistics from the profiler:
+
+```
+17,713,898,504 bytes allocated in the heap
+53,192,132,080 bytes copied during GC
+ 1,160,449,592 bytes maximum residency (84 sample(s))
+     8,891,392 bytes maximum slop
+          2328 MiB total memory in use (0 MB lost due to fragmentation)
+
+real    0m45.378s
+user    1m35.294s
+sys     0m1.452s
+```
+
+While the same setup but using the Disruptor deployment gives us:
+
+```
+6,660,819,256 bytes allocated in the heap
+     94,747,488 bytes copied during GC
+      3,521,408 bytes maximum residency (15 sample(s))
+      4,935,376 bytes maximum slop
+            213 MiB total memory in use (0 MB lost due to fragmentation)
+
+real    0m5.227s
+user    0m7.397s
+sys     0m0.674s
+```
+
+So about an order of magnitude less memory usage and execution time.
 
 ## Observability
 
@@ -941,6 +972,7 @@ cabal build copying && \
 
 ## Further work
 
+* HasRB instances are incomplete
 * Avoid writing NoOutput
 * Actual Arrow instance
 
