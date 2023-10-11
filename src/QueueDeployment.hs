@@ -109,14 +109,22 @@ runP p xs0 = do
   replicateM (length xs0) (atomically (readTBQueue ys))
     `finally` killThread pid
 
+runP_ :: P () b -> Int -> IO ()
+runP_ p n = do
+  xs <- newTBQueueIO qUEUE_SIZE
+  pid <- forkIO $ replicateM_ n (atomically (writeTBQueue xs ()))
+  ys <- deploy p xs
+  replicateM_ n (atomically (readTBQueue ys))
+    `finally` killThread pid
+
 runQueueSleepSeq :: IO ()
-runQueueSleepSeq = void (runP queueSleepSeq (replicate 5 ()))
+runQueueSleepSeq = void (runP_ queueSleepSeq 5)
 
 runQueueSleep :: IO ()
-runQueueSleep = void (runP queueSleep (replicate 5 ()))
+runQueueSleep = void (runP_ queueSleep 5)
 
 runQueueSleepSharded :: IO ()
-runQueueSleepSharded = void (runP queueSleepSharded (replicate 5 ()))
+runQueueSleepSharded = void (runP_ queueSleepSharded 5)
 
 copyP :: P () ()
 copyP =
@@ -136,13 +144,13 @@ noCopyP :: P () ()
 noCopyP = Map (const ())
 
 runQueueCopying :: Int -> IO ()
-runQueueCopying n = void (runP copyP (replicate n ()))
+runQueueCopying n = void (runP_ copyP n)
 
 runQueueCopyingSharded :: Int -> IO ()
-runQueueCopyingSharded n = void (runP copyPSharded (replicate n ()))
+runQueueCopyingSharded n = void (runP_ copyPSharded n)
 
 runQueueNoCopying :: Int -> IO ()
-runQueueNoCopying n = void (runP noCopyP (replicate n ()))
+runQueueNoCopying n = void (runP_ noCopyP n)
 
 runQueueCopying10 :: Int -> IO ()
-runQueueCopying10 n = void (runP copy10P (replicate n ()))
+runQueueCopying10 n = void (runP_ copy10P n)

@@ -876,64 +876,66 @@ If we deploy this pipeline using queues and feed it five million items we get
 the following statistics from the profiler:
 
 ```
-17,713,898,504 bytes allocated in the heap
-53,192,132,080 bytes copied during GC
- 1,160,449,592 bytes maximum residency (84 sample(s))
-     8,891,392 bytes maximum slop
-          2328 MiB total memory in use (0 MB lost due to fragmentation)
+11,457,369,968 bytes allocated in the heap
+   198,233,200 bytes copied during GC
+     5,210,024 bytes maximum residency (27 sample(s))
+     4,841,208 bytes maximum slop
+           216 MiB total memory in use (0 MB lost due to fragmentation)
 
-real    0m45.378s
-user    1m35.294s
-sys     0m1.452s
+
+real    0m8.368s
+user    0m10.647s
+sys     0m0.778s
 ```
 
 While the same setup but using the Disruptor deployment gives us:
 
 ```
-  6,660,819,256 bytes allocated in the heap
-     94,747,488 bytes copied during GC
-      3,521,408 bytes maximum residency (15 sample(s))
-      4,935,376 bytes maximum slop
-            213 MiB total memory in use (0 MB lost due to fragmentation)
+6,629,305,096 bytes allocated in the heap
+  110,544,544 bytes copied during GC
+    3,510,424 bytes maximum residency (17 sample(s))
+    5,090,472 bytes maximum slop
+          214 MiB total memory in use (0 MB lost due to fragmentation)
 
-real    0m5.227s
-user    0m7.397s
-sys     0m0.674s
+real    0m5.028s
+user    0m7.000s
+sys     0m0.626s
 ```
 
-So about an order of magnitude less memory usage and execution time.
+So about an half the amount of bytes allocated in the heap using the Disruptor.
 
 If we double the fan-out factor from five to ten, we get the following stats with
 the queue deployment:
 
 ```
- 36,895,968,096 bytes allocated in the heap
-189,375,122,768 bytes copied during GC
-  2,164,064,704 bytes maximum residency (182 sample(s))
-      8,281,624 bytes maximum slop
-           4291 MiB total memory in use (0 MB lost due to fragmentation)
+35,552,340,768 bytes allocated in the heap
+ 7,355,365,488 bytes copied during GC
+    31,518,256 bytes maximum residency (295 sample(s))
+       739,472 bytes maximum slop
+           257 MiB total memory in use (0 MB lost due to fragmentation)
 
-real    2m28.319s
-user    4m12.422s
-sys     0m2.055s
+real    0m46.104s
+user    3m35.192s
+sys     0m1.387s
 ```
 
 and the following for the Disruptor deployment:
 
 ```
-11,419,407,128 bytes allocated in the heap
-   181,556,784 bytes copied during GC
-     6,306,712 bytes maximum residency (22 sample(s))
-     4,664,784 bytes maximum slop
+11,457,369,968 bytes allocated in the heap
+   198,233,200 bytes copied during GC
+     5,210,024 bytes maximum residency (27 sample(s))
+     4,841,208 bytes maximum slop
            216 MiB total memory in use (0 MB lost due to fragmentation)
 
-real    0m5.527s
-user    0m7.056s
-sys     0m0.425s
+real    0m8.368s
+user    0m10.647s
+sys     0m0.778s
 ```
 
-Total memory usage and processing time doubles in the queue case while it stays
-constant in the Disruptor case[^8].
+So it seems that the gap between the two deployments widens as we introduce more
+fan-out, this expected as the queue implementation will have more copying of
+data to do[^8].
 
 ## Observability
 
@@ -1160,5 +1162,5 @@ If any of this seems interesting, feel free to get involved.
 [^7]: I'm not sure what the best way to fix this is, perhaps using the
     constrained/restricted monad trick?
 
-[^8]: I'm not sure why "bytes allocated in the heap" has doubled in both cases
-    though?
+[^8]: I'm not sure why "bytes allocated in the heap" gets doubled in the
+    Disruptor case and tripled in the queue cases though?
