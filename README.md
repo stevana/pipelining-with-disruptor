@@ -1,4 +1,4 @@
-# Declarative pipelines using the Disruptor
+# Parallel stream processing with zero-copy fan-out and sharding
 
 *Work in progress, please don't share yet*
 
