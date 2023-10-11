@@ -1050,8 +1050,9 @@ now. Here are a bunch of improvements, in no particular order:
       add more machines without downtime. Can we do this automatically based on
       our monitoring? Perhaps building upon my earlier
       [attempt](https://github.com/stevana/elastically-scalable-thread-pools)?
-- [ ] More benchmarks especially against other streaming libraries, and also get
-      to the bottom of footnote[^8].
+- [ ] More benchmarks, in particular trying to confirm that we indeed don't
+      allocate when fanning out and sharding[^8], as well as benchmarks against
+      other streaming libraries.
 
 If any of this seems interesting, feel free to get involved.
 
