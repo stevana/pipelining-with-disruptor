@@ -935,7 +935,7 @@ sys     0m0.778s
 
 So it seems that the gap between the two deployments widens as we introduce more
 fan-out, this expected as the queue implementation will have more copying of
-data to do[^8].
+data to do[^7].
 
 ## Observability
 
@@ -972,13 +972,20 @@ I have written a separate write up on how to make the SVG interactive over
 All of the above Haskell code is available on
 [GitHub](https://github.com/stevana/pipelining-with-disruptor/). The easiest way
 to install the right version of GHC and cabal is probably via
-[ghcup](https://www.haskell.org/ghcup/). Once installed the examples can be run
-as follows.
+[ghcup](https://www.haskell.org/ghcup/). Once installed the
+[examples](https://github.com/stevana/pipelining-with-disruptor/tree/main/src/LibMain)
+can be run as follows:
 
 ```bash
 cat data/test.txt | cabal run uppercase
 cat data/test.txt | cabal run wc # word count
+```
 
+The [sleep
+examples](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/LibMain/Sleep.hs)
+are run like this:
+
+```bash
 cabal run sleep
 cabal run sleep -- --sharded
 ```
@@ -1005,16 +1012,17 @@ There's still a lot to do, but I thought it would be a good place to stop for
 now. Here are a bunch of improvements, in no particular order:
 
 - [ ] Implement the `Arrow` instance for Disruptor `P`ipelines, this isn't as
-      straight forward as in the model case, because the combinators are
-      littered with `HasRB` constraints, e.g.: `(:&&&) :: (HasRB b, HasRB c) =>
-      P a b -> P a c -> P a (b, c)`. Take inspiration from
+      straightforward as in the model case, because the combinators are littered
+      with `HasRB` constraints, e.g.: `(:&&&) :: (HasRB b, HasRB c) => P a b ->
+      P a c -> P a (b, c)`. Perhaps taking inspiration from
       constrained/restricted monads? This would allow us to specify pipelines
-      using the arrow syntax.
+      using the [arrow
+      notation](https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/arrows.html).
 - [ ] I believe the current pipeline combinator allow for arbitrary directed
       acyclic graphs (DAGs), but what if feedback cycles are needed? Does an
       `ArrowLoop` instance make sense in that case?
-- [ ] Can we be avoid copying when using `Either`, e.g. can we store all `Left`s
-      in one ring buffer and all `Right`s in an other?
+- [ ] Can we avoid copying when using `Either` via `(:|||)` or `(:+++)`, e.g.
+      can we store all `Left`s in one ring buffer and all `Right`s in another?
 - [ ] Use unboxed arrays for types that can be unboxed in the `HasRB` instances?
 - [ ] In the word count example we get an input stream of lines, but we only
       want to produce a single line as output when we reach the end of the input
@@ -1051,7 +1059,7 @@ now. Here are a bunch of improvements, in no particular order:
       our monitoring? Perhaps building upon my earlier
       [attempt](https://github.com/stevana/elastically-scalable-thread-pools)?
 - [ ] More benchmarks, in particular trying to confirm that we indeed don't
-      allocate when fanning out and sharding[^8], as well as benchmarks against
+      allocate when fanning out and sharding[^7], as well as benchmarks against
       other streaming libraries.
 
 If any of this seems interesting, feel free to get involved.
@@ -1160,8 +1168,5 @@ If any of this seems interesting, feel free to get involved.
     arrays](https://en.wikipedia.org/wiki/AoS_and_SoA) in other programming
     languages.
 
-[^7]: I'm not sure what the best way to fix this is, perhaps using the
-    constrained/restricted monad trick?
-
-[^8]: I'm not sure why "bytes allocated in the heap" gets doubled in the
+[^7]: I'm not sure why "bytes allocated in the heap" gets doubled in the
     Disruptor case and tripled in the queue cases though?
