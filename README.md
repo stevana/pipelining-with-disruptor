@@ -724,14 +724,6 @@ deploy (p :&&& q) xs = do
   return (RBPair ys zs)
 ```
 
-Side note: unfortunately we also need to add `HasRB` constraints to our pipeline
-type as well:
-
-```haskell
-data P :: Type -> Type -> Type where
-  (:&&&) :: (HasRB b, HasRB c) => P a b -> P a c -> P a (b, c)
-```
-
 Sharding, or partition parallelism as Jim calls it, is a way to make a copy of a
 pipeline and divert half of the events to the first copy and the other half to
 the other copy. Assuming there are enough unused CPUs/core, this could
@@ -992,9 +984,11 @@ There's still a lot to do, but I thought it would be a good place to stop for
 now. Here are a bunch of improvements, in no particular order:
 
 - [ ] Implement the `Arrow` instance for Disruptor `P`ipelines, this isn't as
-      straight forward as in the model case, because the combinators are littered
-      with `HasRB` constraints. Take inspiration from constrained/restricted
-      monads? This would allow us to specify pipelines using the arrow syntax.
+      straight forward as in the model case, because the combinators are
+      littered with `HasRB` constraints, e.g.: `(:&&&) :: (HasRB b, HasRB c) =>
+      P a b -> P a c -> P a (b, c)`. Take inspiration from
+      constrained/restricted monads? This would allow us to specify pipelines
+      using the arrow syntax.
 - [ ] I believe the current pipeline combinator allow for arbitrary directed
       acyclic graphs (DAGs), but what if feedback cycles are needed? Does an
       `ArrowLoop` instance make sense in that case?
