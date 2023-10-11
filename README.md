@@ -14,7 +14,7 @@ it, validate, update our state and construct a response, serialise the response
 and send it back over the socket. These are six distinct stages and we could
 create a pipeline with six CPUs/cores each working on a their own stage and
 feeding the output to the queue of the next stage. If one stage is slow we can
-shard the input, e.g. even requests to go to one worker and odd requests to to
+shard the input, e.g. even requests to go to one worker and odd requests go to
 another thereby nearly doubling the throughput for that stage.
 
 One of the concluding remarks to the previous post is that we can gain even more
@@ -38,16 +38,17 @@ debugging and performance troubleshooting purposes.
 Before we dive into *how* we can achieve this, let's start with the question of
 *why* I'd like to do it.
 
-I believe the way we write programs for multi processors, i.e. multiple
-computers each with multiple CPUs, can be improved upon. Instead of focusing on
-the pitfalls of the current mainstream approaches to these problems, let's have
-a look at what to me seems like the most promising way forward.
+I believe the way we write programs for multiprocessor networks, i.e. multiple
+connected computers each with multiple CPUs/cores, can be improved upon. Instead
+of focusing on the pitfalls of the current mainstream approaches to these
+problems, let's have a look at what to me seems like the most promising way
+forward.
 
 Jim Gray gave a great explanation of dataflow programming in this Turing Award
 Recipient [interview](https://www.youtube.com/watch?v=U3eo49nVxcA&t=1949s). He
 uses props to make his point, which makes it a bit difficult to summaries in
 text here. I highly recommend watching the video clip, the relevant part is only
-3 minutes long.
+three minutes long.
 
 The key point is exactly that of pipelining. Each stage is running on a
 CPU/core, this program is completely sequential, but by connecting several
@@ -129,7 +130,7 @@ Parallelism is a related problem, in that when one has big volumes of data it's
 also common to care about performance and how we can utilise multiple
 processors.
 
-Since dealing with limited memory and multi-processors is a problem that as
+Since dealing with limited memory and multiprocessors is a problem that as
 bothered programmers and computer scientists for a long time, at least since the
 1960s, there's a lot of work that has been done in this area. I'm at best
 familiar with a small fraction of this work, so please bear with me but also do
@@ -209,7 +210,8 @@ the Apache ones don't gracefully "scale down" to a single computer. Just pick
 the right tool for the right job, right? Well, it turns out that
 [40-80%](https://youtu.be/XPlXNUXmcgE?t=2783) of jobs submitted to MapReduce
 systems (such as Apache Hadoop) would run faster if they were ran on a single
-computer instead of a distributed cluster of computers.
+computer instead of a distributed cluster of computers, so picking the right
+tool is perhaps not as easy as it first seems.
 
 There are two exceptions, that I know of, of streaming libraries that also work
 in a distributed setting. Scala's Akka/Pekko
@@ -234,7 +236,8 @@ a high-level syntax for expressing networks, but they both have a rather
 imperative rather than declarative feel. It's however not clear (to me) how
 effectively implement, parallelise[^2], or distribute FRP. Some interesting work
 has been done with hot code swapping in the FRP
-[setting](https://github.com/turion/essence-of-live-coding).
+[setting](https://github.com/turion/essence-of-live-coding), which is
+potentially useful for a telling a good upgrade story.
 
 To summarise, while there are many streaming libraries there seem to be few (if
 any, at least that I know of) that tick all of the following boxes:
@@ -243,8 +246,8 @@ any, at least that I know of) that tick all of the following boxes:
      * in a determinate way;
      * fanning out and sharding without copying data (when run on a single
        computer).
-  2. Potentially distributed over multiple computers, without the need to change
-     the code of the pipeline;
+  2. Potentially distributed over multiple computers for fault tolerance and
+     upgrades, without the need to change the code of the pipeline;
   3. Observable, to ease debugging and performance analysis;
   4. Declarative high-level way of expressing stream processing networks (i.e.
      the pipeline);
@@ -411,7 +414,9 @@ example' xs0 = do
   replicateM (length xs0) (atomically (readTQueue ys))
 ```
 
-Running this in our REPL, gives the same result as in the model:
+Running
+[this](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/QueueDeployment.hs)
+in our REPL, gives the same result as in the model:
 
 ```
 > example' [1,2,3,4,5]
@@ -474,8 +479,14 @@ a pool of worker threads taking items from the input queue and putting them on
 the output queue (`qOut`) after processing, then we wouldn't have a
 deterministic outcome.
 
-Let's have a look at a couple of examples. If we generalise `Map` to `MapM` in
-our model we can write the following program:
+Notice that in the `deploy`ment of `Shard`ing we also end up copying data
+between the queues, similar to the fan-out case (`:&&&`)!
+
+Before we move on to show how to avoid doing this copying, let's have a look at
+a couple of examples to get a better feel for pipelining and sharding. If we
+generalise `Map` to `MapM` in our
+[model](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/ModelIO.hs)
+we can write the following program:
 
 ```haskell
 modelSleep :: P () ()
@@ -535,7 +546,7 @@ queueSleepSeq =
 (5.02 secs, 898,096 bytes)
 ```
 
-Using sharding we can get an even faster running time:
+Using sharding we can get an even shorter running time:
 
 ```haskell
 queueSleepSharded :: P () ()
@@ -668,7 +679,7 @@ performance.
 ## Disruptor pipeline deployment
 
 Recall that the reason we introduced the Disruptor was to avoid copying elements
-of the queue when fanning out (using the `:&&&` combinator).
+of the queue when fanning out (using the `:&&&` combinator) and sharding.
 
 The idea would be to have the workers we fan-out to both be consumers of the
 same Disruptor, that way the inputs don't need to be copied.
@@ -826,18 +837,21 @@ way we can easier see how to generalise to `total` partitions: ``partition i
 `partition i (Partition 0 2) == even` while `partition i (Partition 1 2) ==
 odd`.
 
-Since partitioning and partitioning a partition, etc always introduce a power of
-two we can further optimise to use bitwise or as follows: `partition i
-(Partition n total) = i .|. (total - 1) == 0 + n` thereby avoiding the
-expensive modulus computation. This is a trick used in Disruptor as well, and
-the reason why the capacity of a Disruptor always needs to be a power of two.
+Since partitioning and partitioning a partition, etc, always introduce a power
+of two we can further optimise to use bitwise or as follows: `partition i
+(Partition n total) = i .|. (total - 1) == 0 + n` thereby avoiding the expensive
+modulus computation. This is a trick used in Disruptor as well, and the reason
+why the capacity of a Disruptor always needs to be a power of two.
 
 See the `HasRB (Sharded a)` instance in the following
 [module](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/RingBufferClass.hs)
 for the details.
 
-If we run our sleep pipeline from before using the Disruptor deployment we get
-similar timings as with the queue deployment:
+If we
+[run](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/LibMain/Sleep.hs)
+our sleep pipeline from before using the Disruptor
+[deployment](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/Pipeline.hs)
+we get similar timings as with the queue deployment:
 
 ```
 > runDisruptorSleep False
@@ -953,13 +967,18 @@ I have written a separate write up on how to make the SVG interactive over
 
 ## Running
 
-The easiest way to install the right version of GHC and cabal is probably via
+All of the above Haskell code is available on
+[GitHub](https://github.com/stevana/pipelining-with-disruptor/). The easiest way
+to install the right version of GHC and cabal is probably via
 [ghcup](https://www.haskell.org/ghcup/). Once installed the examples can be run
 as follows.
 
 ```bash
 cat data/test.txt | cabal run uppercase
 cat data/test.txt | cabal run wc # word count
+
+cabal run sleep
+cabal run sleep -- --sharded
 ```
 
 The different copying benchmarks can be reproduced as follows:
@@ -1064,7 +1083,9 @@ If any of this seems interesting, feel free to get involved.
   framework for fast packet I/O;
 * [The output of Linux pipes can be
   indeterministic](https://www.gibney.org/the_output_of_linux_pipes_can_be_indeter)
-  (2019).
+  (2019);
+* [Programming Distributed Systems](https://www.youtube.com/watch?v=Mc3tTRkjCvE)
+  by Mae Milano (Strange Loop, 2023).
 
 
 [^1]: I noticed that the Wikipedia page for [dataflow
