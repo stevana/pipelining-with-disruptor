@@ -10,15 +10,15 @@ pipelining.
 In a nutshell the idea of pipelining is to break up the problem in stages and
 have one (or more) thread(s) per stage and then connect the stages with queues.
 For example, imagine a service where we read some request from a socket, parse
-it, validate, update our state and construct a respose, serialise the response
+it, validate, update our state and construct a response, serialise the response
 and send it back over the socket. These are six distinct stages and we could
 create a pipeline with six CPUs/cores each working on a their own stage and
 feeding the output to the queue of the next stage. If one stage is slow we can
 shard the input, e.g. even requests to go to one worker and odd requests to to
 another thereby nearly doubling the throughput for that stage.
 
-One of the conclusing remarks to the previous post is that we can gain even more
-performace by using a better implementation of queues, e.g. the [LMAX
+One of the concluding remarks to the previous post is that we can gain even more
+performance by using a better implementation of queues, e.g. the [LMAX
 Disruptor](https://en.wikipedia.org/wiki/Disruptor_(software)).
 
 The Disruptor is a low-latency high-throughput queue implementation with support
@@ -43,7 +43,7 @@ computers each with multiple CPUs, can be improved upon. Instead of focusing on
 the pitfalls of the current mainstream approaches to these problems, let's have
 a look at what to me seems like the most promising way forward.
 
-Jim Gray gave a great explaination of dataflow programming in this Turing Award
+Jim Gray gave a great explanation of dataflow programming in this Turing Award
 Recipient [interview](https://www.youtube.com/watch?v=U3eo49nVxcA&t=1949s). He
 uses props to make his point, which makes it a bit difficult to summaries in
 text here. I highly recommend watching the video clip, the relevant part is only
@@ -73,24 +73,23 @@ at the very end of her Turing award
 >  other world. Maybe we need languages that are a little bit more
 >  complete now, so that we can write the whole thing in the language."
 
-Ideally we'd like our pipelines to seemlessly span over multiple computers. In
+Ideally we'd like our pipelines to seamlessly span over multiple computers. In
 fact it should be possible to deploy same pipeline to different configurations
 of processors without changing the pipeline code (nor having to add any
 networking related code).
 
 A pipeline that is redeployed with additional CPUs or computers might or might
 not scale, it depends on whether it makes sense to partition the input of a
-stage further or if perhaps the introduction of an additonal computer merely
+stage further or if perhaps the introduction of an additional computer merely
 adds more overhead. How exactly the pipeline is best spread over the available
 computers and CPUs/cores will require some combination of domain knowledge,
-measurement and judgement. Depending on how quick we can make redeploying of
-pipelines, it might be possilbe to
-[autoscale](https://github.com/stevana/elastically-scalable-thread-pools) them
-using a program that monitors the queue lengths.
+measurement and judgment. Depending on how quick we can make redeploying of
+pipelines, it might be possible to autoscale them using a program that monitors
+the queue lengths.
 
 Also related to redeploying, but even more important than autoscaling, are
 upgrades of pipelines. That's both upgrading the code running at the individual
-stages, as well as how the stages are conncected to each other, i.e. the
+stages, as well as how the stages are connected to each other, i.e. the
 pipeline itself.
 
 Martin Thompson has given many
@@ -145,7 +144,7 @@ Shortly after, in 1965, Peter Landin introduced
 [streams](https://dl.acm.org/doi/10.1145/363744.363749) as a functional analogue
 of Melvin's imperative coroutines.
 
-A more radical departure from von Neumann-style sequential programming can be
+A more radical departure from Von Neumann style sequential programming can be
 seen in the work on [dataflow
 programming](https://en.wikipedia.org/wiki/Dataflow_programming) in general and
 especially in Paul Morrison's [flow-based
@@ -158,7 +157,7 @@ programming and an assembly line in manufacturing:
 
 Each stage is its own process running in parallel with the other stages. In
 flow-based programming stages are computation and the conveyor belts are queues.
-This gives us implicit paralellism and determinate outcome.
+This gives us implicit parallelism and determinate outcome.
 
 Doug McIlroy, who was aware of some of the dataflow work[^1], wrote a
 [memo](http://doc.cat-v.org/unix/pipes/) in 1964 about the idea of pipes,
@@ -184,7 +183,7 @@ released in 2014. Both [Clojure](https://clojure.org/reference/transducers) and
 [Scala](https://doc.akka.io/docs/akka/current/stream/index.html), which also use
 the JVM, got streams that same year (2014).
 
-Among the more imperative programming languages, Javascript and Python both have
+Among the more imperative programming languages, JavaScript and Python both have
 generators (a simple form of coroutines) since around 2006. Go has "goroutines",
 a clear nod to coroutines, since its first version (2009). Coroutines are also
 part of the C++20 standard.
@@ -242,7 +241,7 @@ any, at least that I know of) that tick all of the following boxes:
 
   1. Parallel processing:
      * in a determinate way;
-     * faning out and sharding without copying data (when run on a single
+     * fanning out and sharding without copying data (when run on a single
        computer).
   2. Potentially distributed over multiple computers, without the need to change
      the code of the pipeline;
@@ -347,7 +346,7 @@ model (f :||| g) es =
 model (Shard f) xs = model f xs
 ```
 
-Note that this semantics is completely sequential and perserves the order of the
+Note that this semantics is completely sequential and preserves the order of the
 inputs (determinism). Also note that since we don't have parallelism yet,
 `Shard`ing doesn't do anything. We'll introduce parallelism without breaking
 determinism in the next section.
@@ -378,7 +377,7 @@ instance ArrowChoice P where
   f ||| g = f :||| g
 ```
 
-Ideally we'd also like to be able to use `Arrow` notation/syntax to descripe our
+Ideally we'd also like to be able to use `Arrow` notation/syntax to describe our
 pipelines[^3].
 
 ## Queue pipeline deployment
@@ -442,7 +441,7 @@ Running this in our REPL, gives the same result as in the model:
 ```
 
 In fact, we can use our model to define a property-based test which asserts that
-our queue deployement is faithful to the model:
+our queue deployment is faithful to the model:
 
 ```haskell
 prop_commute :: Eq b => P a b -> [a] -> PropertyM IO ()
@@ -455,7 +454,7 @@ prop_commute p xs = do
   assert (model p xs == ys)
 ```
 
-Actually running this property for arbitary pipelines would require us to first
+Actually running this property for arbitrary pipelines would require us to first
 define a pipeline generator, which is a bit tricky given the indexes of the
 datatype[^4]. It can still me used as a helper for testing specific pipelines
 though, e.g. `prop_commute examplePipeline`.
@@ -491,9 +490,9 @@ deploy (Shard f) xs = do
       merge qOdd qEven qOut
 ```
 
-This alteration will shard the input queue (`qIn`) on even and odd indicies, and
+This alteration will shard the input queue (`qIn`) on even and odd indices, and
 we can `merge` it back without losing determinism. Note that if we'd simply had
-a pool of worker threads taking items from the input queue and puttig them on
+a pool of worker threads taking items from the input queue and putting them on
 the output queue (`qOut`) after processing, then we wouldn't have a
 deterministic outcome.
 
@@ -526,7 +525,7 @@ We see that it takes roughly 5 seconds:
 (5.02 secs, 905,480 bytes)
 ```
 
-This is expected, even though we pipeline and fanout, as the model is completely
+This is expected, even though we pipeline and fan-out, as the model is completely
 sequential.
 
 If we instead run the same pipeline using the queue deployment, we get:
@@ -536,7 +535,7 @@ If we instead run the same pipeline using the queue deployment, we get:
 (1.76 secs, 907,160 bytes)
 ```
 
-The reason for this is that the two sleeps in the fanout happen in parallel now
+The reason for this is that the two sleeps in the fan-out happen in parallel now
 and when the first item is at the second stage the first stage starts processing
 the second item, and so on, i.e. we get a pipelining parallelism.
 
@@ -619,7 +618,7 @@ publish         :: RingBuffer a -> SequenceNumber -> IO ()
 
 We first try to claim `n :: Int` slots in the ring buffer, if that fails
 (returns `Nothing`) then we know that there isn't space in the ring buffer and
-we should apply backpressure upstream (e.g. if the producer is a webserver, we
+we should apply backpressure upstream (e.g. if the producer is a web server, we
 might want to temporarily rejecting clients with status code 503). Once we
 successfully get a sequence number, we can start writing our data. Finally we
 publish the sequence number, this makes it available on the consumer side.
@@ -680,7 +679,7 @@ Hopefully by now we've seen enough internals to be able to explain why the
 Disruptor performs well. First of all, by using a ring buffer we only allocate
 memory when creating the ring buffer, it's then reused when we wrap around the
 ring. The ring buffer is implemented using an array, so the memory access
-patterns are predicatable and the CPU can do prefetching. The consumers don't
+patterns are predictable and the CPU can do prefetching. The consumers don't
 have a copy of the data, they merely have a pointer (the sequence number) to how
 far in the producer's ring buffer they are, which allows for fanning out or
 sharding to multiple consumers without copying data. The fact that we can batch
@@ -690,14 +689,14 @@ performance.
 
 ## Disruptor pipeline deployment
 
-Recall that the reason we introduced the Disrutor was to avoid copying elements
+Recall that the reason we introduced the Disruptor was to avoid copying elements
 of the queue when fanning out (using the `:&&&` combinator).
 
-The idea would be to have the workers we fan out to both be consumers of the
+The idea would be to have the workers we fan-out to both be consumers of the
 same Disruptor, that way the inputs don't need to be copied.
 
 Avoiding to copy the individual outputs from the worker's queues (of `a`s and
-`b`s) into the combined output (of `(a, b)`s) is a bit tricker.
+`b`s) into the combined output (of `(a, b)`s) is a bit trickier.
 
 One way, that I think works, is to do something reminiscent what
 [`Data.Vector`](https://hackage.haskell.org/package/vector) does for pairs.
@@ -737,7 +736,7 @@ instance (HasRB a, HasRB b) => HasRB (a, b) where
   ...
 ```
 
-The `deploy` function for the fanout combinator can now avoid copying:
+The `deploy` function for the fan-out combinator can now avoid copying:
 
 ```haskell
 deploy :: (HasRB a, HasRB b) => P a b -> RB a -> IO (RB b)
@@ -785,7 +784,7 @@ But it allows us to define a `HasRB` instance which does the sharding without
 copying as follows:
 
 ```haskell
-instance HashRB a => HasRB (Sharded a) where
+instance HasRB a => HasRB (Sharded a) where
   data RB (Sharded a) = RBShard Partition Partition (RB a) (RB a)
   readRingBufferRB (RBShard p1 p2 xs ys) i
     | partition i p1 = readRingBufferRB xs i
@@ -920,7 +919,7 @@ sys     0m0.674s
 
 So about an order of magnitude less memory usage and execution time.
 
-If we double the fanout factor from five to ten, we get the following stats with
+If we double the fan-out factor from five to ten, we get the following stats with
 the queue deployment:
 
 ```
@@ -950,7 +949,7 @@ sys     0m0.425s
 ```
 
 Total memory usage and processing time doubles in the queue case while it stays
-constant in the Disrutor case[^8].
+constant in the Disruptor case[^8].
 
 ## Observability
 
@@ -973,7 +972,7 @@ pipeline, as an interactive SVG (you need to click on the image):
 The way it's implemented is that we spawn a separate thread that read the
 producer's cursors and consumer's gating sequences (`IORef SequenceNumber` in
 both cases) every millisecond and saves the `SequenceNumber`s (integers). After
-collecting this data we can create one dot diagram for everytime the data
+collecting this data we can create one dot diagram for every time the data
 changed. In the demo above, we also collected all the elements of the Disruptor,
 this is useful for debugging (the implementation of the pipeline library), but
 it would probably be too expensive to enable this when there's a lot of items to
@@ -1016,8 +1015,8 @@ There's still a lot to do, but I thought it would be a good place to stop for
 now. Here are a bunch of improvements, in no particular order:
 
 - [ ] Implement the `Arrow` instance for Disruptor `P`ipelines, this isn't as
-      straight forward as in the model case, because the combinators are litered
-      with `HasRB` constraints. Take inspriation from constrained/restriced
+      straight forward as in the model case, because the combinators are littered
+      with `HasRB` constraints. Take inspiration from constrained/restricted
       monads? This would allow us to specify pipelines using the arrow syntax.
 - [ ] I believe the current pipeline combinator allow for arbitrary directed
       acyclic graphs (DAGs), but what if feedback cycles are needed? Does an
@@ -1045,7 +1044,7 @@ now. Here are a bunch of improvements, in no particular order:
       pipeline?
 - [ ] Implement a property-based testing generator for pipelines and test using
       `prop_commute` using random pipelines?
-- [ ] Add network/http source and sink?
+- [ ] Add network/HTTP source and sink?
 - [ ] Deploy across network of computers?
 - [ ] Hot-code upgrades of workers/stages with zero downtime, perhaps continuing
       on my earlier
@@ -1071,7 +1070,7 @@ If any of this seems interesting, feel free to get involved.
 * [Understanding the Disruptor, a Beginner's Guide to Hardcore
   Concurrency](https://youtube.com/watch?v=DCdGlxBbKU4) by Trisha Gee and Mike
   Barker (2011);
-* Mike Barker's [bruteforce solution to Guy's problem and
+* Mike Barker's [brute-force solution to Guy's problem and
   benchmarks](https://github.com/mikeb01/folklore/tree/master/src/main/java/performance);
 * [Streaming 101: The world beyond
   batch](https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/)
@@ -1120,7 +1119,7 @@ If any of this seems interesting, feel free to get involved.
     Conal's approach (his Section 11) seems to build upon very fine grained
     parallelism provided by an "unambiguous choice" operator which is implemented
     by spawning two threads. I don't understand where exactly this operator is
-    used in the implementation, but if it's used everytime an element is
+    used in the implementation, but if it's used every time an element is
     processed (in parallel) then the overheard of spawning the threads could
     be significant?
 
