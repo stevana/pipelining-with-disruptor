@@ -308,7 +308,7 @@ examplePipeline = Id :&&& Map even
 
 So far our pipelines are merely data which describes what we'd like to do. In
 order to actually perform a stream transformation we'd need to give semantics to
-our pipeline datatype.
+our pipeline datatype[^3].
 
 The simplest semantics we can give our pipelines is that in terms of list
 transformations.
@@ -357,28 +357,6 @@ We can now run our example pipeline in the REPL:
 > model examplePipeline [1,2,3,4,5]
 [(1,False),(2,True),(3,False),(4,True),(5,False)]
 ```
-
-Side note: the design space of what pipeline combinators to include in the
-pipeline datatype is very big. I've chosen the ones I've done because they are
-instances of already well established type classes:
-
-```haskell
-instance Category P where
-  id    = Id
-  g . f = f :>>> g
-
-instance Arrow P where
-  arr     = Map
-  f *** g = f :*** g
-  f &&& g = f :&&& g
-
-instance ArrowChoice P where
-  f +++ g = f :+++ g
-  f ||| g = f :||| g
-```
-
-Ideally we'd also like to be able to use `Arrow` notation/syntax to describe our
-pipelines[^3].
 
 ## Queue pipeline deployment
 
@@ -992,14 +970,13 @@ cat data/test.txt | cabal run uppercase
 cat data/test.txt | cabal run wc # word count
 ```
 
-The different copying benchmarks can be reproduced as follows (it takes a bit of
-time to run the first two of these):
+The different copying benchmarks can be reproduced as follows:
 
 ```bash
-for flag in "--tbqueue-no-sharding" \
-            "--tbqueue-copy10" \
-            "--no-sharding" \
-            "--copy10"; do
+for flag in "--no-sharding" \
+            "--copy10" \
+            "--tbqueue-no-sharding" \
+            "--tbqueue-copy10"; do \
   cabal build copying && \
     time cabal run copying -- "$flag" && \
     eventlog2html copying.eventlog && \
@@ -1009,7 +986,7 @@ for flag in "--tbqueue-no-sharding" \
 done
 ```
 
-## Further work / contributing
+## Further work and contributing
 
 There's still a lot to do, but I thought it would be a good place to stop for
 now. Here are a bunch of improvements, in no particular order:
@@ -1058,7 +1035,8 @@ now. Here are a bunch of improvements, in no particular order:
       add more machines without downtime. Can we do this automatically based on
       our monitoring? Perhaps building upon my earlier
       [attempt](https://github.com/stevana/elastically-scalable-thread-pools)?
-- [ ] More benchmarks, and get to the bottom of footnote[^8].
+- [ ] More benchmarks especially against other streaming libraries, and also get
+      to the bottom of footnote[^8].
 
 If any of this seems interesting, feel free to get involved.
 
@@ -1123,7 +1101,27 @@ If any of this seems interesting, feel free to get involved.
     processed (in parallel) then the overheard of spawning the threads could
     be significant?
 
-[^3]: Even better would be if arrow notation worked for Cartesian categories.
+[^3]: The design space of what pipeline combinators to include in the pipeline
+    datatype is very big. I've chosen the ones I've done because they are
+    instances of already well established type classes:
+
+    ```haskell
+    instance Category P where
+      id    = Id
+      g . f = f :>>> g
+
+    instance Arrow P where
+      arr     = Map
+      f *** g = f :*** g
+      f &&& g = f :&&& g
+
+    instance ArrowChoice P where
+      f +++ g = f :+++ g
+      f ||| g = f :||| g
+    ```
+
+    Ideally we'd also like to be able to use `Arrow` notation/syntax to describe our
+    pipelines. Even better would be if arrow notation worked for Cartesian categories.
     See Conal Elliott's work on [compiling to
     categories](http://conal.net/papers/compiling-to-categories/) , as well as
     Oleg Grenrus' GHC
