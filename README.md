@@ -1107,7 +1107,8 @@ If any of this seems interesting, feel free to get involved.
     that Jack Dennis and his graduate students pioneered that style of
     programming while he was at MIT in the 60s. I knew Doug was at MIT around
     that time as well, and so I sent an email to Doug asking if he knew of
-    Jack's work. Doug replied saying he was aware of Jack's work and that also
+    Jack's work. Doug replied saying he had left MIT by the 60s, but was still
+    collaborating with people at MIT and was aware of Jack's work and also
     the work by Kelly, Lochbaum and Vyssotsky on
     [BLODI](https://archive.org/details/bstj40-3-669) (1961) was on his mind
     when he wrote the garden hose memo (1964).
