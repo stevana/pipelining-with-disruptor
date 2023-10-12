@@ -1109,7 +1109,7 @@ If any of this seems interesting, feel free to get involved.
     that time as well, and so I sent an email to Doug asking if he knew of
     Jack's work. Doug replied saying he was aware of Jack's work and that also
     the work by Kelly, Lochbaum and Vyssotsky on
-    [BOLDI](https://archive.org/details/bstj40-3-669) (1961) was on his mind
+    [BLODI](https://archive.org/details/bstj40-3-669) (1961) was on his mind
     when he wrote the garden hose memo (1964).
 
 [^2]: There's a paper called [Parallel Functional Reactive
