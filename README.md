@@ -239,8 +239,8 @@ has been done with hot code swapping in the FRP
 [setting](https://github.com/turion/essence-of-live-coding), which is
 potentially useful for a telling a good upgrade story.
 
-To summarise, while there are many streaming libraries there seem to be few (if
-any, at least that I know of) that tick all of the following boxes:
+To summarise, while there are many streaming libraries there seem to be few (at
+least that I know of) that tick all of the following boxes:
 
   1. Parallel processing:
      * in a determinate way;
@@ -251,11 +251,12 @@ any, at least that I know of) that tick all of the following boxes:
   3. Observable, to ease debugging and performance analysis;
   4. Declarative high-level way of expressing stream processing networks (i.e.
      the pipeline);
-  5. Good deploy, upgrade, rescale story;
+  5. Good deploy, upgrade, rescale story for stateful systems;
   6. Elastic, i.e. ability to rescale automatically to meet the load.
 
 I think we need all of the above in order to build Barbara's "substrate for
-distributed systems".
+distributed systems". We'll not get all the way there in this post, but at least
+this should give you a sense of the direction I'd like to go.
 
 ## Plan
 
@@ -560,7 +561,9 @@ queueSleepSharded = Shard queueSleep
 
 This is pretty much where we left off in my previous post. If the speed ups we
 are seeing from pipelining don't make sense, it might help to go back and reread
-the old post, as I spent some more time constructing an intuitive example there.
+the [old
+post](https://github.com/stevana/pipelined-state-machines#pipelined-state-machines),
+as I spent some more time constructing an intuitive example there.
 
 ## Disruptor
 
@@ -1149,7 +1152,7 @@ If any of this seems interesting, feel free to get involved.
     Ideally we'd also like to be able to use `Arrow` notation/syntax to describe our
     pipelines. Even better would be if arrow notation worked for Cartesian categories.
     See Conal Elliott's work on [compiling to
-    categories](http://conal.net/papers/compiling-to-categories/) , as well as
+    categories](http://conal.net/papers/compiling-to-categories/), as well as
     Oleg Grenrus' GHC
     [plugin](https://github.com/phadej/overloaded/blob/master/src/Overloaded/Categories.hs)
     that does the right thing and translates arrow syntax into Cartesian
