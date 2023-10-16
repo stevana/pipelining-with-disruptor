@@ -96,9 +96,7 @@ pipeline itself.
 Martin Thompson has given many
 [talks](https://www.youtube.com/watch?v=_KvFapRkR9I) which echo the general
 ideas of Jim and Barbara. If you prefer reading then you can also have a look at
-the [reactive manifesto](https://www.reactivemanifesto.org/) which Martin
-cowrote.
-
+the [reactive manifesto](https://www.reactivemanifesto.org/) which he cowrote.
 Martin is also one of the people behind the Disruptor, which we will come back
 to soon, and he also [said](https://youtu.be/OqsAGFExFgQ?t=2532) the following:
 
@@ -149,9 +147,8 @@ A more radical departure from Von Neumann style sequential programming can be
 seen in the work on [dataflow
 programming](https://en.wikipedia.org/wiki/Dataflow_programming) in general and
 especially in Paul Morrison's [flow-based
-programming](https://jpaulm.github.io/fbp/index.html) (late 1960s).
-
-Paul uses the following picture to illustrate the similarity between flow-based
+programming](https://jpaulm.github.io/fbp/index.html) (late 1960s). Paul uses
+the following picture to illustrate the similarity between flow-based
 programming and an assembly line in manufacturing:
 
 ![](https://raw.githubusercontent.com/stevana/pipelining-with-disruptor/main/data/bottling_factory.png)
@@ -163,7 +160,6 @@ This gives us implicit parallelism and determinate outcome.
 Doug McIlroy, who was aware of some of the dataflow work[^1], wrote a
 [memo](http://doc.cat-v.org/unix/pipes/) in 1964 about the idea of pipes,
 although it took until 1973 for them to get implemented in Unix by Ken Thompson.
-
 Unix pipes have a strong feel of flow-based programming, although all data is of
 type string. A pipeline of commands will start a process per command, so there's
 implicit parallelism as well (assuming the operative system schedules different
@@ -198,10 +194,9 @@ different results, because the workers do not preserve the order of the inputs).
 
 If the data volumes are too big for a single computer then there's a different
 set of streaming tools, such as Apache Hadoop (2006), Apache Spark (2009),
-Apache Kafka (2011), Apache Storm (2011), and Apache Flink (2011).
-
-While the Apache tools can often be deployed locally for testing purposes, they
-are intended for distributed computations and are therefore perhaps a bit more
+Apache Kafka (2011), Apache Storm (2011), and Apache Flink (2011). While the
+Apache tools can often be deployed locally for testing purposes, they are
+intended for distributed computations and are therefore perhaps a bit more
 cumbersome to deploy and use than the streaming libraries we mentioned earlier.
 
 Initially it might not seem like a big deal that streaming libraries don't
@@ -478,16 +473,15 @@ This alteration will shard the input queue (`qIn`) on even and odd indices, and
 we can `merge` it back without losing determinism. Note that if we'd simply had
 a pool of worker threads taking items from the input queue and putting them on
 the output queue (`qOut`) after processing, then we wouldn't have a
-deterministic outcome.
-
-Notice that in the `deploy`ment of `Shard`ing we also end up copying data
-between the queues, similar to the fan-out case (`:&&&`)!
+deterministic outcome. Also notice that in the `deploy`ment of `Shard`ing we
+also end up copying data between the queues, similar to the fan-out case
+(`:&&&`)!
 
 Before we move on to show how to avoid doing this copying, let's have a look at
 a couple of examples to get a better feel for pipelining and sharding. If we
 generalise `Map` to `MapM` in our
 [model](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/ModelIO.hs)
-we can write the following program:
+we can write the following contrived program:
 
 ```haskell
 modelSleep :: P () ()
@@ -529,8 +523,8 @@ The reason for this is that the two sleeps in the fan-out happen in parallel now
 and when the first item is at the second stage the first stage starts processing
 the second item, and so on, i.e. we get a pipelining parallelism.
 
-If we wanted to achieve a sequential running time using the queue deployment,
-we'd have to write a one stage pipeline like so:
+If we, for some reason, wanted to achieve a sequential running time using the
+queue deployment, we'd have to write a one stage pipeline like so:
 
 ```haskell
 queueSleepSeq :: P () ()
@@ -597,7 +591,7 @@ value of the `cursor` modulo the `capacity` we get the index into the array
 where we are supposed to write our next element (this is how we wrap around the
 array, i.e. forming a ring). In order to avoid overwriting elements which have
 not yet been consumed we also need to keep track of the cursors of all consumers
-(`gatingSeqeunces`). As an optimisation we cache where the last consumer is
+(`gatingSequences`). As an optimisation we cache where the last consumer is
 (`cachedGatingSequence`).
 
 The API from the producing side looks as follows:
@@ -685,10 +679,9 @@ Recall that the reason we introduced the Disruptor was to avoid copying elements
 of the queue when fanning out (using the `:&&&` combinator) and sharding.
 
 The idea would be to have the workers we fan-out to both be consumers of the
-same Disruptor, that way the inputs don't need to be copied.
-
-Avoiding to copy the individual outputs from the worker's queues (of `a`s and
-`b`s) into the combined output (of `(a, b)`s) is a bit trickier.
+same Disruptor, that way the inputs don't need to be copied. Avoiding to copy
+the individual outputs from the worker's queues (of `a`s and `b`s) into the
+combined output (of `(a, b)`s) is a bit trickier.
 
 One way, that I think works, is to do something reminiscent what
 [`Data.Vector`](https://hackage.haskell.org/package/vector) does for pairs.
@@ -717,6 +710,7 @@ Disruptor that we defined above.
 instance HasRB String where
   data RB String = RB (RingBuffer String)
   newRB n        = RB <$> newRingBuffer_ n
+  ...
 ```
 
 While the instance for pairs will use a pair of Disruptors:
@@ -749,13 +743,14 @@ When we shard in the `TQueue` deployment of pipelines we end up copying events
 from the original stream into the two pipeline copies. This is similar to
 copying when fanning out, which we discussed above, and the solution is similar.
 
-First we need to extend the pipeline type with a new shard constructor whose
-output type is `Sharded`.
+First we need to change the pipeline type so that the shard constructor has an
+output type that's `Sharded`.
 
-```haskell
+```diff
 data P :: Type -> Type -> Type where
   ...
-  Shard :: P a b -> P a (Sharded b)
+- Shard :: P a b -> P a b
++ Shard :: P a b -> P a (Sharded b)
 ```
 
 This type is in fact merely the identity type:
@@ -780,7 +775,7 @@ The idea being that we split the ring buffer into two, like when fanning out,
 and then we have a way of taking an index and figuring out which of the two ring
 buffers it's actually in.
 
-This partitioning information is threaded though while deploying:
+This partitioning information, `p`, is threaded though while deploying:
 
 ```haskell
 deploy (Shard f) p xs = do
@@ -993,7 +988,9 @@ cabal run sleep
 cabal run sleep -- --sharded
 ```
 
-The different copying benchmarks can be reproduced as follows:
+The different [copying
+benchmarks](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/LibMain/Copying.hs)
+can be reproduced as follows:
 
 ```bash
 for flag in "--no-sharding" \
