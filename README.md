@@ -2,9 +2,8 @@
 
 *Work in progress, please don't share yet*
 
-In a previous
-[post](https://github.com/stevana/pipelined-state-machines#pipelined-state-machines)
-I explored how we can make better use of our parallel hardware by means of
+In a previous [post](https://stevana.github.io/pipelined_state_machines.html) I
+explored how we can make better use of our parallel hardware by means of
 pipelining.
 
 In a nutshell the idea of pipelining is to break up the problem in stages and
@@ -555,9 +554,8 @@ queueSleepSharded = Shard queueSleep
 
 This is pretty much where we left off in my previous post. If the speed ups we
 are seeing from pipelining don't make sense, it might help to go back and reread
-the [old
-post](https://github.com/stevana/pipelined-state-machines#pipelined-state-machines),
-as I spent some more time constructing an intuitive example there.
+the [old post](https://stevana.github.io/pipelined_state_machines.html), as I
+spent some more time constructing an intuitive example there.
 
 ## Disruptor
 
@@ -963,7 +961,7 @@ it would probably be too expensive to enable this when there's a lot of items to
 be processed.
 
 I have written a separate write up on how to make the SVG interactive over
-[here](https://github.com/stevana/svg-viewer-in-svg#svg-viewer-written-in-svg).
+[here](https://stevana.github.io/visualising_datastructures_over_time_using_svg.html).
 
 ## Running
 
@@ -1048,7 +1046,7 @@ now. Here are a bunch of improvements, in no particular order:
 - [ ] Deploy across network of computers?
 - [ ] Hot-code upgrades of workers/stages with zero downtime, perhaps continuing
       on my earlier
-      [attempt](https://github.com/stevana/hot-swapping-state-machines)?
+      [attempt](https://stevana.github.io/hot-code_swapping_a_la_erlang_with_arrow-based_state_machines.html)?
 - [ ] In addition to upgrading the workers/stages, one might also want to rewire
       the pipeline itself. Doug made me aware of an old
       [paper](https://inria.hal.science/inria-00306565) by Gilles Kahn and David
@@ -1057,7 +1055,7 @@ now. Here are a bunch of improvements, in no particular order:
 - [ ] Related to reconfiguring is to be able shard/scale/reroute pipelines and
       add more machines without downtime. Can we do this automatically based on
       our monitoring? Perhaps building upon my earlier
-      [attempt](https://github.com/stevana/elastically-scalable-thread-pools)?
+      [attempt](https://stevana.github.io/elastically_scalable_thread_pools.html)?
 - [ ] More benchmarks, in particular trying to confirm that we indeed don't
       allocate when fanning out and sharding[^7], as well as benchmarks against
       other streaming libraries.
