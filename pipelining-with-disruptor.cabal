@@ -33,7 +33,7 @@ common profile
   ghc-options: -prof -fprof-cafs -fprof-late -fno-prof-count-entries
 
 library
-  import:           warnings, debug
+  import:           warnings
   exposed-modules:
     Counter
     CRC32
@@ -91,9 +91,7 @@ executable uppercase
   ghc-options:      -O2 -threaded -rtsopts -with-rtsopts=-N
 
 executable sleep
-  import:           warnings, profile, debug
-
-  -- profile, debug
+  import:           warnings
   hs-source-dirs:   app/sleep
   main-is:          Main.hs
   build-depends:
@@ -108,7 +106,7 @@ executable sleep
 -- ghc-options:      -O2 -threaded -rtsopts "-with-rtsopts=-N -qa"
 
 executable copying
-  import:           warnings, profile, debug
+  import:           warnings
   hs-source-dirs:   app/copying
   main-is:          Main.hs
   build-depends:
@@ -141,7 +139,7 @@ test-suite test
   ghc-options:        -threaded -rtsopts -with-rtsopts=-N -fno-ignore-asserts
 
 benchmark bench
-  import:           warnings, debug, profile
+  import:           warnings
   hs-source-dirs:   bench
   main-is:          Main.hs
   type:             exitcode-stdio-1.0
