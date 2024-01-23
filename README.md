@@ -258,7 +258,7 @@ The rest of this post is organised as follows.
 
 First we'll have a look at how to model pipelines as a transformation of lists.
 The purpose of this is to give us an easy to understand sequential specification
-of we would like our pipelines to do.
+of what we would like our pipelines to do.
 
 We'll then give our first parallel implementation of pipelines using "normal"
 queues. The main point here is to recap of the problem with copying data that
@@ -376,6 +376,8 @@ deploy Id         xs = return xs
 deploy (f :>>> g) xs = deploy g =<< deploy f xs
 deploy (Map f)    xs = deploy (MapM (return . f)) xs
 deploy (MapM f)   xs = do
+  -- (Where `MapM :: (a -> IO b) -> P a b` is the monadic generalisation of
+  -- `Map` from the list model that we saw earlier.)
   ys <- newTQueueIO
   forkIO $ forever $ do
     x <- atomically (readTQueue xs)
@@ -399,6 +401,9 @@ deploy (f :&&& g) xs = do
     atomically (writeTQueue yzs (y, z))
   return yzs
 ```
+
+(I've omitted the cases for `:|||` and `:+++` to not take up too much space.
+We'll come back and handle `Shard` separately later.)
 
 ```haskell
 example' :: [Int] -> IO [(Int, Bool)]
@@ -783,65 +788,9 @@ deploy (Shard f) p xs = do
   return (RBShard p1 p2 ys1 ys2)
 ```
 
-The partitioning information consists of the total number of partitions and the
-index of the current partition.
-
-```haskell
-data Partition = Partition
-  { pIndex :: Int
-  , pTotal :: Int
-  }
-```
-
-No partitioning is represented as follows:
-
-```haskell
-noPartition :: Partition
-noPartition = Partition 0 1
-```
-
-While creating a new partition is done as follows:
-
-```haskell
-addPartition :: Partition -> (Partition, Partition)
-addPartition (Partition i total) =
-  ( Partition i (total * 2)
-  , Partition (i + total) (total * 2)
-  )
-```
-
-So, for example, if we partition twice we get:
-
-```
-> let (p1, p2) = addPartition noPartition in (addPartition p1, addPartition p2)
-((Partition 0 4, Partition 2 4), (Partition 1 4, Partition 3 4))
-```
-
-From this information we can compute if an index is in an partition or not as
-follows:
-
-```haskell
-partition :: SequenceNumber -> Partition -> Bool
-partition i (Partition n total) = i `mod` total == 0 + n
-```
-
-To understand why this works, it might be helpful to consider the case where we
-only have two partitions. We can partition on even or odd indices as follows:
-``even i = i `mod` 2 == 0 + 0`` and ``odd i = i `mod` 2 == 0 + 1``. Written this
-way we can easier see how to generalise to `total` partitions: ``partition i
-(Partition n total) = i `mod` total == 0 + n``. So for `total = 2` then
-`partition i (Partition 0 2) == even` while `partition i (Partition 1 2) ==
-odd`.
-
-Since partitioning and partitioning a partition, etc, always introduce a power
-of two we can further optimise to use bitwise or as follows: `partition i
-(Partition n total) = i .|. (total - 1) == 0 + n` thereby avoiding the expensive
-modulus computation. This is a trick used in Disruptor as well, and the reason
-why the capacity of a Disruptor always needs to be a power of two.
-
-See the `HasRB (Sharded a)` instance in the following
-[module](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/RingBufferClass.hs)
-for the details.
+For the details of how this works see the following footnote[^7] and the `HasRB
+(Sharded a)` instance in the following
+[module](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/RingBufferClass.hs).
 
 If we
 [run](https://github.com/stevana/pipelining-with-disruptor/blob/main/src/LibMain/Sleep.hs)
@@ -931,7 +880,7 @@ sys     0m0.778s
 
 So it seems that the gap between the two deployments widens as we introduce more
 fan-out, this expected as the queue implementation will have more copying of
-data to do[^7].
+data to do[^8].
 
 ## Observability
 
@@ -1094,7 +1043,9 @@ If any of this seems interesting, feel free to get involved.
   indeterministic](https://www.gibney.org/the_output_of_linux_pipes_can_be_indeter)
   (2019);
 * [Programming Distributed Systems](https://www.youtube.com/watch?v=Mc3tTRkjCvE)
-  by Mae Milano (Strange Loop, 2023).
+  by Mae Milano (Strange Loop, 2023);
+* [Pipeline-oriented programming](https://www.youtube.com/watch?v=ipceTuJlw-M)
+  by Scott Wlaschin (NDC Porto, 2023).
 
 
 [^1]: I noticed that the Wikipedia page for [dataflow
@@ -1167,5 +1118,61 @@ If any of this seems interesting, feel free to get involved.
     arrays](https://en.wikipedia.org/wiki/AoS_and_SoA) in other programming
     languages.
 
-[^7]: I'm not sure why "bytes allocated in the heap" gets doubled in the
+[^7]: The partitioning information consists of the total number of partitions
+    and the index of the current partition.
+
+    ```haskell
+    data Partition = Partition
+      { pIndex :: Int
+      , pTotal :: Int
+      }
+    ```
+
+    No partitioning is represented as follows:
+
+    ```haskell
+    noPartition :: Partition
+    noPartition = Partition 0 1
+    ```
+
+    While creating a new partition is done as follows:
+
+    ```haskell
+    addPartition :: Partition -> (Partition, Partition)
+    addPartition (Partition i total) =
+      ( Partition i (total * 2)
+      , Partition (i + total) (total * 2)
+      )
+    ```
+
+    So, for example, if we partition twice we get:
+
+    ```
+    > let (p1, p2) = addPartition noPartition in (addPartition p1, addPartition p2)
+    ((Partition 0 4, Partition 2 4), (Partition 1 4, Partition 3 4))
+    ```
+
+    From this information we can compute if an index is in an partition or not as
+    follows:
+
+    ```haskell
+    partition :: SequenceNumber -> Partition -> Bool
+    partition i (Partition n total) = i `mod` total == 0 + n
+    ```
+
+    To understand why this works, it might be helpful to consider the case where we
+    only have two partitions. We can partition on even or odd indices as follows:
+    ``even i = i `mod` 2 == 0 + 0`` and ``odd i = i `mod` 2 == 0 + 1``. Written this
+    way we can easier see how to generalise to `total` partitions: ``partition i
+    (Partition n total) = i `mod` total == 0 + n``. So for `total = 2` then
+    `partition i (Partition 0 2) == even` while `partition i (Partition 1 2) ==
+    odd`.
+
+    Since partitioning and partitioning a partition, etc, always introduce a power
+    of two we can further optimise to use bitwise or as follows: `partition i
+    (Partition n total) = i .|. (total - 1) == 0 + n` thereby avoiding the expensive
+    modulus computation. This is a trick used in Disruptor as well, and the reason
+    why the capacity of a Disruptor always needs to be a power of two.
+
+[^8]: I'm not sure why "bytes allocated in the heap" gets doubled in the
     Disruptor case and tripled in the queue cases though?

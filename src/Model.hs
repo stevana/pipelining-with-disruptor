@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE Arrows #-}
 {-# LANGUAGE KindSignatures #-}
 
 module Model where
@@ -23,6 +24,8 @@ data P :: Type -> Type -> Type where
   (:+++)  :: P a c -> P b d -> P (Either a b) (Either c d)
   (:|||)  :: P a c -> P b c -> P (Either a b) c
   Shard   :: P a b -> P a b
+  SM      :: s -> P (a, s) (b, s) -> P a b
+  Delay   :: a -> P a a
 
 ------------------------------------------------------------------------
 
@@ -62,9 +65,28 @@ model (f :||| g) es0 =
     merge (Right _ : es) ls       (r : rs) = r : merge es ls rs
     merge _ _ _ = error "impossible"
 model (Shard f) xs = model f xs
+model (Delay x) xs = x : xs
+model (SM s0 f) xs =
+  let
+    (ys, ss) = unzip (model f (zip xs (s0 : ss)))
+    -- this loops:
+    -- (ys, ss) = unzip (model (second (Delay s0) :>>> f) (zip xs ss))
+    -- is it because list isn't lazy enough?! compare to streams in arrow-loop
+    -- repo...
+  in
+    ys
 
 example :: [Int] -> [(Int, Bool)]
 example = model examplePipeline
+
+-- > exampleSM [1..5]
+-- [1,3,6,10,15]
+-- which is the same as `scanl1 (+) [1..5]`
+
+exampleSM :: [Int] -> [Int]
+exampleSM = model (SM 0 sumSM)
+  where
+    sumSM = proc (i, ih) -> returnA -< (ih + i, ih + i)
 
 ------------------------------------------------------------------------
 
