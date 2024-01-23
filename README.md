@@ -1,7 +1,5 @@
 # Parallel stream processing with zero-copy fan-out and sharding
 
-*Work in progress, please don't share yet*
-
 In a previous [post](https://stevana.github.io/pipelined_state_machines.html) I
 explored how we can make better use of our parallel hardware by means of
 pipelining.
@@ -1006,7 +1004,7 @@ now. Here are a bunch of improvements, in no particular order:
       our monitoring? Perhaps building upon my earlier
       [attempt](https://stevana.github.io/elastically_scalable_thread_pools.html)?
 - [ ] More benchmarks, in particular trying to confirm that we indeed don't
-      allocate when fanning out and sharding[^7], as well as benchmarks against
+      allocate when fanning out and sharding[^8], as well as benchmarks against
       other streaming libraries.
 
 If any of this seems interesting, feel free to get involved.
