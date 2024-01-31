@@ -960,8 +960,11 @@ now. Here are a bunch of improvements, in no particular order:
       straightforward as in the model case, because the combinators are littered
       with `HasRB` constraints, e.g.: `(:&&&) :: (HasRB b, HasRB c) => P a b ->
       P a c -> P a (b, c)`. Perhaps taking inspiration from
-      constrained/restricted monads? This would allow us to specify pipelines
-      using the [arrow
+      constrained/restricted monads? In the `r/haskell` discussion, the user
+      `ryani` [pointed
+      out](https://old.reddit.com/r/haskell/comments/19ef2b6/parallel_stream_processing_with_zerocopy_fanout/kjhfyfk/)
+      a promising solution involving adding `Constraint`s to the `HasRB` class.
+      This would allow us to specify pipelines using the [arrow
       notation](https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/arrows.html).
 - [ ] I believe the current pipeline combinator allow for arbitrary directed
       acyclic graphs (DAGs), but what if feedback cycles are needed? Does an
@@ -1044,6 +1047,12 @@ If any of this seems interesting, feel free to get involved.
   by Mae Milano (Strange Loop, 2023);
 * [Pipeline-oriented programming](https://www.youtube.com/watch?v=ipceTuJlw-M)
   by Scott Wlaschin (NDC Porto, 2023).
+
+## Discussion
+
+* [discourse.haskell.org](https://discourse.haskell.org/t/parallel-stream-processing-with-zero-copy-fan-out-and-sharding/8632);
+* [r/haskell](https://old.reddit.com/r/haskell/comments/19ef2b6/parallel_stream_processing_with_zerocopy_fanout/);
+* [lobste.rs](https://lobste.rs/s/mvgdev/parallel_stream_processing_with_zero).
 
 
 [^1]: I noticed that the Wikipedia page for [dataflow
